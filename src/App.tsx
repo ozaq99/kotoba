@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
 import {
@@ -133,6 +133,8 @@ function QuizSetup() {
   const [customCount, setCustomCount] = useState('');
   const [level, setLevel] = useState<Level | 'ALL'>('ALL');
   const [direction, setDirection] = useState<'meaning' | 'word'>('meaning');
+  const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
+  const [sessionMinutes, setSessionMinutes] = useState(3);
   const available = level === 'ALL' ? vocabulary.length : vocabulary.filter((word) => word.level === level).length;
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
     <div className="grid gap-8 lg:grid-cols-[1.1fr_.9fr] lg:items-start">
@@ -143,26 +145,40 @@ function QuizSetup() {
            <div><label className="mb-3 block text-sm font-bold">How many cards?</label><div className="grid grid-cols-4 gap-2">{[5, 10, 20, 30].map((option) => <button key={option} onClick={() => { setCount(Math.min(option, available)); setCustomCount(''); }} className={cx(!customCount && count === option ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted', 'rounded-xl border py-3 text-sm font-bold')} data-testid={`quiz-count-${option}`}>{option}</button>)}</div><div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-custom-count" className="text-xs font-semibold text-muted-foreground">Custom</label><input id="quiz-custom-count" type="number" min="1" max={available} value={customCount} onChange={(event) => { const raw = event.target.value; setCustomCount(raw); const next = Number(raw); if (raw && Number.isFinite(next)) setCount(Math.min(Math.max(next, 1), available)); }} placeholder={`1–${available}`} className="h-10 w-28 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-custom-count" /><span className="text-xs text-muted-foreground">cards, up to {available.toLocaleString()}</span></div></div>
            <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button></div><p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available</p></div>
            <div><label className="mb-3 block text-sm font-bold">Quiz type</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setDirection('meaning')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'meaning' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-meaning"><BookOpen size={15} /> Choose meaning</button><button onClick={() => setDirection('word')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'word' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-word"><Keyboard size={15} /> Choose Japanese</button></div><p className="mt-2 text-xs text-muted-foreground">Japanese choices include kanji and furigana.</p></div>
+           <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> 15s per card</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>{timerMode === 'session' && <div className="mt-3 grid grid-cols-3 gap-2">{[3, 5, 10].map((minutes) => <button key={minutes} onClick={() => setSessionMinutes(minutes)} className={cx('rounded-xl border py-2.5 text-sm font-bold', sessionMinutes === minutes ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-session-minutes-${minutes}`}>{minutes} min</button>)}</div>}<p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? 'Each card gives you 15 seconds to answer.' : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
-        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}`)} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
+        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&sessionSeconds=${sessionMinutes * 60}`)} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
       </section>
     </div>
   </div>;
 }
+
+const TIME_PER_CARD = 15;
 
 function QuizActive({ params }: { params: URLSearchParams }) {
   const [, setLocation] = useLocation();
   const count = Number(params.get('count')) || 10;
   const level = (params.get('level') || 'ALL') as Level | 'ALL';
   const direction = params.get('direction') === 'word' ? 'word' : 'meaning';
+  const timerMode = params.get('timerMode') === 'session' ? 'session' : 'question';
+  const sessionSeconds = Number(params.get('sessionSeconds')) || 180;
   const [cards] = useState(() => shuffle(level === 'ALL' ? vocabulary : vocabulary.filter((word) => word.level === level)).slice(0, count));
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [results, setResults] = useState<QuizResult['answers']>([]);
   const [streak, setStreak] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(TIME_PER_CARD);
+  const [sessionTimeLeft, setSessionTimeLeft] = useState(sessionSeconds);
+  const finishedRef = useRef(false);
   const word = cards[index];
   const choices = useMemo(() => word ? shuffle([word, ...shuffle(vocabulary.filter((item) => item.id !== word.id)).slice(0, 3)]) : [], [word]);
   if (!word) return <div className="p-10">No cards available.</div>;
+  const finish = (finalResults: QuizResult['answers']) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score: finalResults.filter((item) => item.correct).length, total: cards.length, answers: finalResults, level, finishedAt: new Date().toISOString() } satisfies QuizResult));
+    setLocation('/results');
+  };
   const answer = (choice: Word) => {
     if (selected) return;
     const choiceLabel = direction === 'meaning' ? choice.meaning : choice.expression;
@@ -171,23 +187,48 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     setStreak((current) => correct ? current + 1 : 0);
     setResults((current) => [...current, { word, choice: choiceLabel, correct }]);
   };
+  const timeout = () => {
+    if (selected) return;
+    setSelected('TIMEOUT'); playFeedback(feedbackAudio.wrong);
+    setStreak(0);
+    setResults((current) => [...current, { word, choice: '(no answer)', correct: false }]);
+  };
+  useEffect(() => {
+    if (timerMode !== 'question') return;
+    setTimeLeft(TIME_PER_CARD);
+  }, [index, timerMode]);
+  useEffect(() => {
+    if (timerMode !== 'question') return;
+    if (selected) return;
+    if (timeLeft <= 0) { timeout(); return; }
+    const id = setTimeout(() => setTimeLeft((value) => value - 1), 1000);
+    return () => clearTimeout(id);
+  }, [timeLeft, selected, timerMode]);
+  useEffect(() => {
+    if (timerMode !== 'session') return;
+    if (sessionTimeLeft <= 0) {
+      const withCurrent = selected ? results : [...results, { word, choice: '(no answer)', correct: false }];
+      finish(withCurrent);
+      return;
+    }
+    const id = setTimeout(() => setSessionTimeLeft((value) => value - 1), 1000);
+    return () => clearTimeout(id);
+  }, [sessionTimeLeft, timerMode]);
   const next = () => {
     if (index + 1 >= cards.length) {
-      const nextResults = results;
-      sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score: nextResults.filter((item) => item.correct).length, total: cards.length, answers: nextResults, level, finishedAt: new Date().toISOString() } satisfies QuizResult));
-      setLocation('/results');
+      finish(results);
     } else { setIndex((value) => value + 1); setSelected(null); }
   };
    useEffect(() => { const onKey = (event: KeyboardEvent) => { const key = Number(event.key); if (key >= 1 && key <= choices.length) answer(choices[key - 1]); if (event.key === 'Enter' && selected) next(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); });
   const progress = ((index + (selected ? 1 : 0)) / cards.length) * 100;
   return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
-     <div className="mb-8 flex items-center justify-between"><div><p className="mono-label text-muted-foreground">Live round / {level === 'ALL' ? 'mixed deck' : level}</p><p className="mt-2 text-sm font-bold">Card {String(index + 1).padStart(2, '0')} <span className="font-normal text-muted-foreground">of {cards.length}</span></p></div><Link href="/quiz" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-muted" data-testid="button-quit-quiz"><X size={15} /> Exit</Link></div>
+     <div className="mb-8 flex items-center justify-between"><div><p className="mono-label text-muted-foreground">Live round / {level === 'ALL' ? 'mixed deck' : level}</p><p className="mt-2 text-sm font-bold">Card {String(index + 1).padStart(2, '0')} <span className="font-normal text-muted-foreground">of {cards.length}</span></p></div><div className="flex items-center gap-2">{timerMode === 'question' ? <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', selected ? 'border-border text-muted-foreground' : timeLeft <= 5 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {timeLeft}s</span> : <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', sessionTimeLeft <= 30 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {String(Math.floor(sessionTimeLeft / 60)).padStart(2, '0')}:{String(sessionTimeLeft % 60).padStart(2, '0')}</span>}<Link href="/quiz" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-muted" data-testid="button-quit-quiz"><X size={15} /> Exit</Link></div></div>
     <div className="mb-10 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[hsl(var(--accent))] transition-[width] duration-500" style={{ width: `${Math.max(progress, 5)}%` }} /></div>
     <section className="animate-pop rounded-[1.75rem] border border-border bg-card p-6 md:p-12" data-testid="quiz-card">
        <div className="flex items-center justify-between"><LevelPill level={word.level} /><span className="mono-label flex items-center gap-2 text-muted-foreground"><Volume2 size={14} /> {direction === 'meaning' ? 'choose the meaning' : 'choose the Japanese word'}</span></div>
        <div className="py-14 text-center">{direction === 'meaning' ? <><p className="kanji-display text-7xl md:text-8xl">{word.expression}</p><p className="mt-4 text-lg text-[hsl(var(--secondary))]">{word.reading}</p></> : <><p className="mx-auto max-w-2xl text-3xl font-semibold leading-tight md:text-5xl">{word.meaning}</p><p className="mono-label mt-5 text-muted-foreground">Which Japanese word matches?</p></>}</div>
        <div className="grid gap-3 md:grid-cols-2">{choices.map((choice, choiceIndex) => { const right = choice.id === word.id; return <button key={choice.id} onClick={() => answer(choice)} className={cx('group flex min-h-14 items-center gap-4 rounded-xl border p-3 text-left text-sm font-medium transition-all', !selected && 'hover:-translate-y-0.5 hover:border-[hsl(var(--secondary))]', selected && right && 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.13)]', selected && choice.id === selected && !right && 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]')} data-testid={`quiz-answer-${choiceIndex + 1}`}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted font-mono text-xs text-muted-foreground group-hover:bg-[hsl(var(--secondary)/.15)]">{choiceIndex + 1}</span><span className="flex flex-1 flex-col">{direction === 'meaning' ? choice.meaning : <><span className="kanji-display text-xl leading-tight">{choice.expression}</span><span className="mt-1 text-xs text-[hsl(var(--secondary))]">{choice.reading}</span></>}</span>{selected && right && <Check size={17} className="text-[hsl(var(--secondary))]" />}{selected && choice.id === selected && !right && <X size={17} className="text-[hsl(var(--accent))]" />}</button>; })}</div>
-       {selected && <div className="mt-6 flex items-center justify-between rounded-xl bg-muted px-4 py-3"><p className="text-sm font-semibold">{selected === word.id ? 'Nice. That one is staying put.' : <>The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</>}</p><button onClick={next} className="flex items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-3 py-2 text-xs font-bold text-[hsl(var(--primary-foreground))]" data-testid="button-next-card">{index + 1 === cards.length ? 'See results' : 'Next card'} <ArrowRight size={14} /></button></div>}
+       {selected && <div className="mt-6 flex items-center justify-between rounded-xl bg-muted px-4 py-3"><p className="text-sm font-semibold">{selected === word.id ? 'Nice. That one is staying put.' : selected === 'TIMEOUT' ? <>Time's up! The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</> : <>The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</>}</p><button onClick={next} className="flex items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-3 py-2 text-xs font-bold text-[hsl(var(--primary-foreground))]" data-testid="button-next-card">{index + 1 === cards.length ? 'See results' : 'Next card'} <ArrowRight size={14} /></button></div>}
     </section>
   </div>;
 }
