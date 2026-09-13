@@ -78,7 +78,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </nav>
       </div>
       <div className="mt-auto rounded-2xl border border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-accent)/.58)] p-4">
-        <div className="mb-3 flex items-center justify-between"><span className="mono-label text-[hsl(var(--sidebar-foreground)/.5)]">Today’s streak</span><Flame size={16} className="text-[hsl(var(--accent))]" /></div>
+        <div className="mb-3 flex items-center justify-between"><span className="mono-label text-[hsl(var(--sidebar-foreground)/.5)]">Today's streak</span><Flame size={16} className="text-[hsl(var(--accent))]" /></div>
         <p className="font-serif text-3xl">{currentStreak} day{currentStreak === 1 ? '' : 's'}</p><p className="mt-1 text-xs text-[hsl(var(--sidebar-foreground)/.55)]">{currentStreak > 0 ? 'A small habit, kept alive.' : 'Finish a round today to start one.'}</p>
         <div className="mt-4 flex gap-1">{last7Days.map((played, day) => <span key={day} className={cx('h-1.5 flex-1 rounded-full', played ? 'bg-[hsl(var(--sidebar-primary))]' : 'bg-[hsl(var(--sidebar-foreground)/.17)]')} />)}</div>
       </div>
@@ -120,7 +120,6 @@ function WordCard({ word, favorite, onFavorite }: { word: Word; favorite: boolea
 function Cabinet() {
   const [query, setQuery] = useState('');
   const [level, setLevel] = useState<Level | 'ALL' | 'FAVORITES'>('ALL');
-  const [favorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
   const [visible, setVisible] = useState(24);
@@ -164,11 +163,12 @@ function QuizSetup() {
   const [, setLocation] = useLocation();
   const [count, setCount] = useState(10);
   const [customCount, setCustomCount] = useState('');
-  const [level, setLevel] = useState<Level | 'ALL'>('ALL');
+  const [level, setLevel] = useState<Level | 'ALL' | 'FAVORITES'>('ALL');
   const [direction, setDirection] = useState<'meaning' | 'word'>('meaning');
   const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
   const [cardSecondsInput, setCardSecondsInput] = useState('15');
   const [sessionMinutesInput, setSessionMinutesInput] = useState('3');
+  const [favorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
   const cardSeconds = Math.min(Math.max(Math.round(Number(cardSecondsInput)) || 15, 3), 120);
   const sessionMinutes = Math.min(Math.max(Math.round(Number(sessionMinutesInput)) || 3, 1), 180);
   const available = level === 'ALL' ? vocabulary.length : level === 'FAVORITES' ? favorites.length : vocabulary.filter((word) => word.level === level).length;
@@ -186,8 +186,7 @@ function QuizSetup() {
              {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSecondsInput} onChange={(event) => setCardSecondsInput(event.target.value)} onBlur={() => setCardSecondsInput(String(cardSeconds))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="180" value={sessionMinutesInput} onChange={(event) => setSessionMinutesInput(event.target.value)} onBlur={() => setSessionMinutesInput(String(sessionMinutes))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–180)</span></div>}
              <p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? `Each card gives you ${cardSeconds} second${cardSeconds === 1 ? '' : 's'} to answer.` : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
-        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
-          disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0
+        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
       </section>
     </div>
   </div>;
@@ -203,9 +202,9 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const sessionSeconds = Number(params.get('sessionSeconds')) || 180;
   const [favorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
   const [cards] = useState(() => {
-  const pool = level === 'ALL' ? vocabulary : level === 'FAVORITES' ? vocabulary.filter((word) => favorites.includes(word.id)) : vocabulary.filter((word) => word.level === level);
+    const pool = level === 'ALL' ? vocabulary : level === 'FAVORITES' ? vocabulary.filter((word) => favorites.includes(word.id)) : vocabulary.filter((word) => word.level === level);
     return shuffle(pool).slice(0, count);
- });
+  });
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [results, setResults] = useState<QuizResult['answers']>([]);
@@ -213,9 +212,13 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const [timeLeft, setTimeLeft] = useState(cardSeconds);
   const [sessionTimeLeft, setSessionTimeLeft] = useState(sessionSeconds);
   const finishedRef = useRef(false);
+
   const word = cards[index];
-  const choices = useMemo(() => word ? shuffle([word, ...shuffle(vocabulary.filter((item) => item.id !== word.id)).slice(0, 3)]) : [], [word]);
-  if (!word) return <div className="p-10">No cards available.</div>;
+  const choices = useMemo(
+    () => word ? shuffle([word, ...shuffle(vocabulary.filter((item) => item.id !== word.id)).slice(0, 3)]) : [],
+    [word],
+  );
+
   const finish = (finalResults: QuizResult['answers']) => {
     if (finishedRef.current) return;
     finishedRef.current = true;
@@ -225,7 +228,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     setLocation('/results');
   };
   const answer = (choice: Word) => {
-    if (selected) return;
+    if (!word || selected) return;
     const choiceLabel = direction === 'meaning' ? choice.meaning : choice.expression;
     const correct = choice.id === word.id;
     setSelected(choice.id); playFeedback(correct ? feedbackAudio.kills[Math.min(streak, 4)] : feedbackAudio.wrong);
@@ -233,15 +236,17 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     setResults((current) => [...current, { word, choice: choiceLabel, correct }]);
   };
   const timeout = () => {
-    if (selected) return;
+    if (!word || selected) return;
     setSelected('TIMEOUT'); playFeedback(feedbackAudio.wrong);
     setStreak(0);
     setResults((current) => [...current, { word, choice: '(no answer)', correct: false }]);
   };
+
   useEffect(() => {
     if (timerMode !== 'question') return;
     setTimeLeft(cardSeconds);
   }, [index, timerMode, cardSeconds]);
+
   useEffect(() => {
     if (timerMode !== 'question') return;
     if (selected) return;
@@ -249,22 +254,36 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     const id = setTimeout(() => setTimeLeft((value) => value - 1), 1000);
     return () => clearTimeout(id);
   }, [timeLeft, selected, timerMode]);
+
   useEffect(() => {
     if (timerMode !== 'session') return;
     if (sessionTimeLeft <= 0) {
-      const withCurrent = selected ? results : [...results, { word, choice: '(no answer)', correct: false }];
+      const withCurrent = word ? (selected ? results : [...results, { word, choice: '(no answer)', correct: false }]) : results;
       finish(withCurrent);
       return;
     }
     const id = setTimeout(() => setSessionTimeLeft((value) => value - 1), 1000);
     return () => clearTimeout(id);
   }, [sessionTimeLeft, timerMode]);
+
   const next = () => {
     if (index + 1 >= cards.length) {
       finish(results);
     } else { setIndex((value) => value + 1); setSelected(null); }
   };
-   useEffect(() => { const onKey = (event: KeyboardEvent) => { const key = Number(event.key); if (key >= 1 && key <= choices.length) answer(choices[key - 1]); if (event.key === 'Enter' && selected) next(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const key = Number(event.key);
+      if (key >= 1 && key <= choices.length) answer(choices[key - 1]);
+      if (event.key === 'Enter' && selected) next();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [choices, selected]);
+
+  if (!word) return <div className="p-10">No cards available.</div>;
+
   const progress = ((index + (selected ? 1 : 0)) / cards.length) * 100;
   return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
      <div className="mb-8 flex items-center justify-between"><div><p className="mono-label text-muted-foreground">Live round / {level === 'ALL' ? 'mixed deck' : level === 'FAVORITES' ? 'saved words' : level}</p><p className="mt-2 text-sm font-bold">Card {String(index + 1).padStart(2, '0')} <span className="font-normal text-muted-foreground">of {cards.length}</span></p></div><div className="flex items-center gap-2">{timerMode === 'question' ? <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', selected ? 'border-border text-muted-foreground' : timeLeft <= 5 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {timeLeft}s</span> : <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', sessionTimeLeft <= 30 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {String(Math.floor(sessionTimeLeft / 60)).padStart(2, '0')}:{String(sessionTimeLeft % 60).padStart(2, '0')}</span>}<Link href="/quiz" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-muted" data-testid="button-quit-quiz"><X size={15} /> Exit</Link></div></div>
