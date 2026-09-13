@@ -20,6 +20,28 @@ const levelColor: Record<Level, string> = {
 };
 
 type QuizResult = { score: number; total: number; answers: Array<{ word: Word; choice: string; correct: boolean }>; level: string; finishedAt: string };
+type HistoryEntry = { date: string; score: number; total: number };
+const HISTORY_KEY = 'kotoba-history';
+function toDateKey(date: Date) { return date.toISOString().slice(0, 10); }
+function loadHistory(): HistoryEntry[] { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; } }
+function recordHistory(entry: HistoryEntry) { const current = loadHistory(); current.push(entry); localStorage.setItem(HISTORY_KEY, JSON.stringify(current.slice(-300))); }
+function computeStreaks(history: HistoryEntry[]) {
+  const days = new Set(history.map((item) => item.date));
+  let current = 0;
+  const cursor = new Date();
+  while (days.has(toDateKey(cursor))) { current += 1; cursor.setDate(cursor.getDate() - 1); }
+  const sortedDays = Array.from(days).sort();
+  let best = 0, run = 0, previous: string | null = null;
+  for (const day of sortedDays) {
+    if (previous) {
+      const expected = new Date(previous); expected.setDate(expected.getDate() + 1);
+      run = toDateKey(expected) === day ? run + 1 : 1;
+    } else run = 1;
+    best = Math.max(best, run);
+    previous = day;
+  }
+  return { current, best: Math.max(best, current) };
+}
 
 function cx(...classes: Array<string | false | null | undefined>) { return classes.filter(Boolean).join(' '); }
 
@@ -35,6 +57,10 @@ function Logo() {
 function Shell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  useEffect(() => { const onFocus = () => setHistory(loadHistory()); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, []);
+  const { current: currentStreak } = useMemo(() => computeStreaks(history), [history]);
+  const last7Days = useMemo(() => { const days = new Set(history.map((item) => item.date)); const cursor = new Date(); const result: boolean[] = []; for (let i = 0; i < 7; i += 1) { result.unshift(days.has(toDateKey(cursor))); cursor.setDate(cursor.getDate() - 1); } return result; }, [history]);
   const navItems = [
     { href: '/', label: 'Cabinet', icon: Home },
     { href: '/quiz', label: 'Quiz deck', icon: Target },
@@ -53,8 +79,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       </div>
       <div className="mt-auto rounded-2xl border border-[hsl(var(--sidebar-border))] bg-[hsl(var(--sidebar-accent)/.58)] p-4">
         <div className="mb-3 flex items-center justify-between"><span className="mono-label text-[hsl(var(--sidebar-foreground)/.5)]">Today’s streak</span><Flame size={16} className="text-[hsl(var(--accent))]" /></div>
-        <p className="font-serif text-3xl">4 days</p><p className="mt-1 text-xs text-[hsl(var(--sidebar-foreground)/.55)]">A small habit, kept alive.</p>
-        <div className="mt-4 flex gap-1">{[1, 2, 3, 4, 5, 6, 7].map((day) => <span key={day} className={cx('h-1.5 flex-1 rounded-full', day < 5 ? 'bg-[hsl(var(--sidebar-primary))]' : 'bg-[hsl(var(--sidebar-foreground)/.17)]')} />)}</div>
+        <p className="font-serif text-3xl">{currentStreak} day{currentStreak === 1 ? '' : 's'}</p><p className="mt-1 text-xs text-[hsl(var(--sidebar-foreground)/.55)]">{currentStreak > 0 ? 'A small habit, kept alive.' : 'Finish a round today to start one.'}</p>
+        <div className="mt-4 flex gap-1">{last7Days.map((played, day) => <span key={day} className={cx('h-1.5 flex-1 rounded-full', played ? 'bg-[hsl(var(--sidebar-primary))]' : 'bg-[hsl(var(--sidebar-foreground)/.17)]')} />)}</div>
       </div>
     </aside>
     <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-border bg-background/90 px-5 backdrop-blur-md md:ml-[246px] md:px-10">
@@ -98,7 +124,12 @@ function Cabinet() {
   const [favorites, setFavorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
   const [visible, setVisible] = useState(24);
   const [ready, setReady] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   useEffect(() => { const id = window.setTimeout(() => setReady(true), 180); return () => window.clearTimeout(id); }, []);
+  const { current: currentRun, best: bestRun } = useMemo(() => computeStreaks(history), [history]);
+  const lastEntry = history[history.length - 1];
+  const lastScorePct = lastEntry ? Math.round((lastEntry.score / lastEntry.total) * 100) : null;
+  const resetProgress = () => { if (!window.confirm('Reset your streak and score history? This cannot be undone.')) return; localStorage.removeItem(HISTORY_KEY); setHistory([]); };
   const filtered = useMemo(() => vocabulary.filter((word) => {
     const matchesText = `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(query.toLowerCase());
     return matchesText && (level === 'ALL' || word.level === level) && (!favoritesOnly || favorites.includes(word.id));
@@ -114,9 +145,10 @@ function Cabinet() {
     <section className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4" data-testid="cabinet-stats">
       <StatCard icon={Layers3} label="In the cabinet" value={vocabulary.length.toLocaleString()} note="across five levels" color="hsl(194 71% 42%)" />
       <StatCard icon={Heart} label="Kept close" value={favorites.length.toString().padStart(2, '0')} note="your saved words" color="hsl(11 77% 61%)" />
-      <StatCard icon={Flame} label="Current run" value="4 days" note="best: 12 days" color="hsl(38 68% 59%)" />
-      <StatCard icon={Target} label="Last score" value="82%" note="nice work yesterday" color="hsl(69 73% 45%)" />
+      <StatCard icon={Flame} label="Current run" value={`${currentRun} day${currentRun === 1 ? '' : 's'}`} note={bestRun > 0 ? `best: ${bestRun} day${bestRun === 1 ? '' : 's'}` : 'finish a round to start'} color="hsl(38 68% 59%)" />
+      <StatCard icon={Target} label="Last score" value={lastScorePct !== null ? `${lastScorePct}%` : '—'} note={lastEntry ? `on ${lastEntry.date}` : 'no quizzes yet'} color="hsl(69 73% 45%)" />
     </section>
+    {history.length > 0 && <div className="mt-3 flex justify-end"><button onClick={resetProgress} className="text-xs font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="button-reset-progress">Reset streak &amp; score history</button></div>}
     <section className="mt-12"><SectionTitle eyebrow="The cabinet" title="Browse your words" action={<span className="hidden text-xs text-muted-foreground sm:block">{filtered.length.toLocaleString()} entries found</span>} />
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
         <label className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisible(24); }} placeholder="Search kanji, reading, or meaning…" className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-search" /></label>
@@ -134,8 +166,10 @@ function QuizSetup() {
   const [level, setLevel] = useState<Level | 'ALL'>('ALL');
   const [direction, setDirection] = useState<'meaning' | 'word'>('meaning');
   const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
-  const [cardSeconds, setCardSeconds] = useState(15);
-  const [sessionMinutes, setSessionMinutes] = useState(3);
+  const [cardSecondsInput, setCardSecondsInput] = useState('15');
+  const [sessionMinutesInput, setSessionMinutesInput] = useState('3');
+  const cardSeconds = Math.min(Math.max(Math.round(Number(cardSecondsInput)) || 15, 3), 120);
+  const sessionMinutes = Math.min(Math.max(Math.round(Number(sessionMinutesInput)) || 3, 1), 60);
   const available = level === 'ALL' ? vocabulary.length : vocabulary.filter((word) => word.level === level).length;
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
     <div className="grid gap-8 lg:grid-cols-[1.1fr_.9fr] lg:items-start">
@@ -147,7 +181,7 @@ function QuizSetup() {
            <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button></div><p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available</p></div>
            <div><label className="mb-3 block text-sm font-bold">Quiz type</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setDirection('meaning')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'meaning' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-meaning"><BookOpen size={15} /> Choose meaning</button><button onClick={() => setDirection('word')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'word' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-word"><Keyboard size={15} /> Choose Japanese</button></div><p className="mt-2 text-xs text-muted-foreground">Japanese choices include kanji and furigana.</p></div>
            <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> Per question</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>
-             {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSeconds} onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) setCardSeconds(Math.min(Math.max(Math.round(next), 3), 120)); }} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="60" value={sessionMinutes} onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) setSessionMinutes(Math.min(Math.max(Math.round(next), 1), 60)); }} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–60)</span></div>}
+             {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSecondsInput} onChange={(event) => setCardSecondsInput(event.target.value)} onBlur={() => setCardSecondsInput(String(cardSeconds))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="60" value={sessionMinutesInput} onChange={(event) => setSessionMinutesInput(event.target.value)} onBlur={() => setSessionMinutesInput(String(sessionMinutes))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–60)</span></div>}
              <p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? `Each card gives you ${cardSeconds} second${cardSeconds === 1 ? '' : 's'} to answer.` : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
         <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}`)} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
@@ -178,7 +212,9 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const finish = (finalResults: QuizResult['answers']) => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score: finalResults.filter((item) => item.correct).length, total: cards.length, answers: finalResults, level, finishedAt: new Date().toISOString() } satisfies QuizResult));
+    const score = finalResults.filter((item) => item.correct).length;
+    sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score, total: cards.length, answers: finalResults, level, finishedAt: new Date().toISOString() } satisfies QuizResult));
+    recordHistory({ date: toDateKey(new Date()), score, total: cards.length });
     setLocation('/results');
   };
   const answer = (choice: Word) => {
