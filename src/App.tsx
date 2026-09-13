@@ -134,6 +134,7 @@ function QuizSetup() {
   const [level, setLevel] = useState<Level | 'ALL'>('ALL');
   const [direction, setDirection] = useState<'meaning' | 'word'>('meaning');
   const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
+  const [cardSeconds, setCardSeconds] = useState(15);
   const [sessionMinutes, setSessionMinutes] = useState(3);
   const available = level === 'ALL' ? vocabulary.length : vocabulary.filter((word) => word.level === level).length;
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
@@ -145,15 +146,15 @@ function QuizSetup() {
            <div><label className="mb-3 block text-sm font-bold">How many cards?</label><div className="grid grid-cols-4 gap-2">{[5, 10, 20, 30].map((option) => <button key={option} onClick={() => { setCount(Math.min(option, available)); setCustomCount(''); }} className={cx(!customCount && count === option ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted', 'rounded-xl border py-3 text-sm font-bold')} data-testid={`quiz-count-${option}`}>{option}</button>)}</div><div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-custom-count" className="text-xs font-semibold text-muted-foreground">Custom</label><input id="quiz-custom-count" type="number" min="1" max={available} value={customCount} onChange={(event) => { const raw = event.target.value; setCustomCount(raw); const next = Number(raw); if (raw && Number.isFinite(next)) setCount(Math.min(Math.max(next, 1), available)); }} placeholder={`1–${available}`} className="h-10 w-28 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-custom-count" /><span className="text-xs text-muted-foreground">cards, up to {available.toLocaleString()}</span></div></div>
            <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button></div><p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available</p></div>
            <div><label className="mb-3 block text-sm font-bold">Quiz type</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setDirection('meaning')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'meaning' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-meaning"><BookOpen size={15} /> Choose meaning</button><button onClick={() => setDirection('word')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'word' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-word"><Keyboard size={15} /> Choose Japanese</button></div><p className="mt-2 text-xs text-muted-foreground">Japanese choices include kanji and furigana.</p></div>
-           <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> 15s per card</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>{timerMode === 'session' && <div className="mt-3 grid grid-cols-3 gap-2">{[3, 5, 10].map((minutes) => <button key={minutes} onClick={() => setSessionMinutes(minutes)} className={cx('rounded-xl border py-2.5 text-sm font-bold', sessionMinutes === minutes ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-session-minutes-${minutes}`}>{minutes} min</button>)}</div>}<p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? 'Each card gives you 15 seconds to answer.' : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
+           <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> Per question</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>
+             {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSeconds} onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) setCardSeconds(Math.min(Math.max(Math.round(next), 3), 120)); }} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="60" value={sessionMinutes} onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) setSessionMinutes(Math.min(Math.max(Math.round(next), 1), 60)); }} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–60)</span></div>}
+             <p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? `Each card gives you ${cardSeconds} second${cardSeconds === 1 ? '' : 's'} to answer.` : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
-        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&sessionSeconds=${sessionMinutes * 60}`)} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
+        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}`)} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
       </section>
     </div>
   </div>;
 }
-
-const TIME_PER_CARD = 15;
 
 function QuizActive({ params }: { params: URLSearchParams }) {
   const [, setLocation] = useLocation();
@@ -161,13 +162,14 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const level = (params.get('level') || 'ALL') as Level | 'ALL';
   const direction = params.get('direction') === 'word' ? 'word' : 'meaning';
   const timerMode = params.get('timerMode') === 'session' ? 'session' : 'question';
+  const cardSeconds = Number(params.get('cardSeconds')) || 15;
   const sessionSeconds = Number(params.get('sessionSeconds')) || 180;
   const [cards] = useState(() => shuffle(level === 'ALL' ? vocabulary : vocabulary.filter((word) => word.level === level)).slice(0, count));
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [results, setResults] = useState<QuizResult['answers']>([]);
   const [streak, setStreak] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(TIME_PER_CARD);
+  const [timeLeft, setTimeLeft] = useState(cardSeconds);
   const [sessionTimeLeft, setSessionTimeLeft] = useState(sessionSeconds);
   const finishedRef = useRef(false);
   const word = cards[index];
@@ -195,8 +197,8 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   };
   useEffect(() => {
     if (timerMode !== 'question') return;
-    setTimeLeft(TIME_PER_CARD);
-  }, [index, timerMode]);
+    setTimeLeft(cardSeconds);
+  }, [index, timerMode, cardSeconds]);
   useEffect(() => {
     if (timerMode !== 'question') return;
     if (selected) return;
