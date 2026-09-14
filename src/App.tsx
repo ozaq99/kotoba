@@ -194,8 +194,8 @@ function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists>
               <span className={cx('truncate text-sm', list.id === activeId ? 'font-bold text-[hsl(var(--secondary))]' : 'font-medium')}>{list.name}</span>
               <span className="mono-label shrink-0 text-muted-foreground">{list.wordIds.length}</span>
             </button>
-            <button onClick={() => handleRename(list)} aria-label={`Rename ${list.name}`} className="rounded-md p-1.5 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100" data-testid={`button-rename-slot-${list.id}`}><Pencil size={13} /></button>
-            {lists.length > 1 && <button onClick={() => handleDelete(list)} aria-label={`Delete ${list.name}`} className="rounded-md p-1.5 text-muted-foreground opacity-0 hover:bg-[hsl(var(--destructive)/.14)] hover:text-[hsl(var(--destructive))] group-hover:opacity-100" data-testid={`button-delete-slot-${list.id}`}><Trash2 size={13} /></button>}
+            <button onClick={() => handleRename(list)} aria-label={`Rename ${list.name}`} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" data-testid={`button-rename-slot-${list.id}`}><Pencil size={13} /></button>
+            {lists.length > 1 && <button onClick={() => handleDelete(list)} aria-label={`Delete ${list.name}`} className="rounded-md p-1.5 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/.14)]" data-testid={`button-delete-slot-${list.id}`}><Trash2 size={13} /></button>}
           </div>)}
         </div>
         <button
