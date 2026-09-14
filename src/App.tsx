@@ -4,7 +4,7 @@ import { useAuth } from '@/auth/useAuth';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '@/utils/firebase/client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
 import {
@@ -91,92 +91,187 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
   return arr;
 }
 
-// Save slots: multiple renamable word lists, one of which is "active" (what
-// the heart button on a word card saves into). Reads/writes localStorage
-// directly, mirroring how history/favorites already worked in this file.
-// NOTE: MAX_SAVE_SLOTS limits the number of SLOTS (lists) you can create —
-// it does NOT limit how many words you can save inside a single slot.
+// -------------------------------------------------------------
+// CLOUD USER DATA CONTEXT (Cross-device sync for saved & custom words)
+// -------------------------------------------------------------
 const MAX_SAVE_SLOTS = 10;
 
-function useWordLists() {
+interface DataContextType {
+  lists: WordList[];
+  activeId: string;
+  activeList: WordList;
+  setActiveId: (id: string) => void;
+  createList: (name: string) => string;
+  renameList: (id: string, name: string) => void;
+  deleteList: (id: string) => void;
+  toggleWord: (wordId: string, listId?: string) => void;
+  slotLimitReached: boolean;
+  maxSlots: number;
+  customWords: CustomWord[];
+  addCustomWord: (draft: CustomWordDraft) => void;
+  updateCustomWord: (id: string, draft: CustomWordDraft) => void;
+  removeCustomWord: (id: string) => void;
+}
+
+const DataContext = createContext<DataContextType | null>(null);
+
+function DataProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [lists, setLists] = useState<WordList[]>(() => loadWordLists());
   const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
-
-  useEffect(() => {
-    persistWordLists(lists);
-    if (user) setDoc(doc(db, 'wordLists', user.uid), { lists, activeId }, { merge: true });
-  }, [lists, user]);
-  useEffect(() => {
-    if (activeId) {
-      persistActiveListId(activeId);
-      if (user) setDoc(doc(db, 'wordLists', user.uid), { lists, activeId }, { merge: true });
-    }
-  }, [activeId, user]);
+  const [customWords, setCustomWords] = useState<CustomWord[]>(() => loadCustomWords());
 
   useEffect(() => {
     if (!user) return;
-    const ref = doc(db, 'wordLists', user.uid);
+
+    const ref = doc(db, 'userData', user.uid);
     const unsubscribe = onSnapshot(ref, (snap) => {
       if (snap.exists()) {
-        const data = snap.data() as { lists: WordList[]; activeId: string };
-        setLists(data.lists);
-        setActiveId(data.activeId);
+        const data = snap.data();
+        if (Array.isArray(data.lists)) {
+          setLists(data.lists);
+          persistWordLists(data.lists);
+        }
+        if (data.activeId) {
+          setActiveId(data.activeId);
+          persistActiveListId(data.activeId);
+        }
+        if (Array.isArray(data.customWords)) {
+          setCustomWords(data.customWords);
+          persistCustomWords(data.customWords);
+        }
       } else {
-        setDoc(ref, { lists, activeId });
+        setDoc(ref, {
+          lists: loadWordLists(),
+          activeId: loadActiveListId(loadWordLists()),
+          customWords: loadCustomWords(),
+        });
       }
     });
+
     return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
+  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[] }) => {
+    if (!user) return;
+    setDoc(doc(db, 'userData', user.uid), payload, { merge: true }).catch(console.error);
+  };
 
   const slotLimitReached = lists.length >= MAX_SAVE_SLOTS;
 
   const createList = (name: string) => {
     if (slotLimitReached) return activeId;
     const { lists: next, id } = createWordList(lists, name);
-    setLists(next); setActiveId(id); return id;
+    setLists(next);
+    setActiveId(id);
+    persistWordLists(next);
+    persistActiveListId(id);
+    pushToCloud({ lists: next, activeId: id });
+    return id;
   };
-  const renameList = (id: string, name: string) => setLists((current) => renameWordList(current, id, name));
-  const deleteList = (id: string) => setLists((current) => {
-    if (current.length <= 1) return current;
-    const next = deleteWordList(current, id);
-    if (activeId === id) setActiveId(next[0].id);
-    return next;
-  });
-  const toggleWord = (wordId: string, listId: string = activeId) => setLists((current) => toggleWordInList(current, listId, wordId));
-  return { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, toggleWord, slotLimitReached, maxSlots: MAX_SAVE_SLOTS };
+
+  const renameList = (id: string, name: string) => {
+    const next = renameWordList(lists, id, name);
+    setLists(next);
+    persistWordLists(next);
+    pushToCloud({ lists: next });
+  };
+
+  const deleteList = (id: string) => {
+    if (lists.length <= 1) return;
+    const next = deleteWordList(lists, id);
+    const nextActive = activeId === id ? next[0].id : activeId;
+    setLists(next);
+    setActiveId(nextActive);
+    persistWordLists(next);
+    persistActiveListId(nextActive);
+    pushToCloud({ lists: next, activeId: nextActive });
+  };
+
+  const toggleWord = (wordId: string, listId: string = activeId) => {
+    const next = toggleWordInList(lists, listId, wordId);
+    setLists(next);
+    persistWordLists(next);
+    pushToCloud({ lists: next });
+  };
+
+  const addWord = (draft: CustomWordDraft) => {
+    const next = addCustomWord(customWords, draft).words;
+    setCustomWords(next);
+    persistCustomWords(next);
+    pushToCloud({ customWords: next });
+  };
+
+  const editWord = (id: string, draft: CustomWordDraft) => {
+    const next = updateCustomWord(customWords, id, draft);
+    setCustomWords(next);
+    persistCustomWords(next);
+    pushToCloud({ customWords: next });
+  };
+
+  const removeWord = (id: string) => {
+    const next = deleteCustomWord(customWords, id);
+    setCustomWords(next);
+    persistCustomWords(next);
+    pushToCloud({ customWords: next });
+  };
+
+  const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
+
+  return (
+    <DataContext.Provider
+      value={{
+        lists,
+        activeId,
+        activeList,
+        setActiveId: (id) => {
+          setActiveId(id);
+          persistActiveListId(id);
+          pushToCloud({ activeId: id });
+        },
+        createList,
+        renameList,
+        deleteList,
+        toggleWord,
+        slotLimitReached,
+        maxSlots: MAX_SAVE_SLOTS,
+        customWords,
+        addCustomWord: addWord,
+        updateCustomWord: editWord,
+        removeCustomWord: removeWord,
+      }}
+    >
+      {children}
+    </DataContext.Provider>
+  );
 }
 
-// Custom ("personal drawer") vocabulary: words the user adds themselves.
-// Persisted under its own localStorage key (see src/lib/customWords.ts), so
-// these entries never mix into the original CSV-backed `vocabulary`.
+function useWordLists() {
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useWordLists must be used within DataProvider');
+  return {
+    lists: ctx.lists,
+    activeList: ctx.activeList,
+    activeId: ctx.activeId,
+    setActiveId: ctx.setActiveId,
+    createList: ctx.createList,
+    renameList: ctx.renameList,
+    deleteList: ctx.deleteList,
+    toggleWord: ctx.toggleWord,
+    slotLimitReached: ctx.slotLimitReached,
+    maxSlots: ctx.maxSlots,
+  };
+}
+
 function useCustomWords() {
-  const { user } = useAuth();
-  const [words, setWords] = useState<CustomWord[]>(() => loadCustomWords());
-
-  useEffect(() => {
-    persistCustomWords(words);
-    if (user) setDoc(doc(db, 'customWords', user.uid), { words });
-  }, [words, user]);
-
-  useEffect(() => {
-    if (!user) return;
-    const ref = doc(db, 'customWords', user.uid);
-    const unsubscribe = onSnapshot(ref, (snap) => {
-      if (snap.exists()) setWords((snap.data().words as CustomWord[]) ?? []);
-      else setDoc(ref, { words });
-    });
-    return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const add = (draft: CustomWordDraft) => setWords((current) => addCustomWord(current, draft).words);
-  const update = (id: string, draft: CustomWordDraft) => setWords((current) => updateCustomWord(current, id, draft));
-  const remove = (id: string) => setWords((current) => deleteCustomWord(current, id));
-  return { words, add, update, remove };
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useCustomWords must be used within DataProvider');
+  return {
+    words: ctx.customWords,
+    add: ctx.addCustomWord,
+    update: ctx.updateCustomWord,
+    remove: ctx.removeCustomWord,
+  };
 }
 
 function Logo() {
@@ -820,7 +915,18 @@ function Router() {
 }
 
 function App() {
-  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <DataProvider>
+            <Router />
+          </DataProvider>
+        </WouterRouter>
+        <Toaster />
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
 }
 
 export default App;
