@@ -28,10 +28,20 @@ const levelColor: Record<Level, string> = {
   N2: 'hsl(11 77% 61%)', N1: 'hsl(224 37% 27%)',
 };
 
-// Quiz drawer options. Every original option behaves exactly as before;
-// 'CABINET_PLUS' is the one deck where the user's personal-drawer words
-// are mixed in with the whole built-in cabinet.
-type Deck = Level | 'ALL' | 'FAVORITES' | 'CABINET_PLUS';
+// Quiz drawer options. The five level drawers, 'Saved' and 'My words' can be
+// combined freely (e.g. N4 + My words, N3 + N4 + Saved). 'Mixed' ('ALL') is
+// the original "everything" deck and stays exclusive — it never combines
+// with the other drawers.
+type Deck = Level | 'ALL' | 'FAVORITES' | 'MY_WORDS';
+
+const ALL_DECKS: Deck[] = ['N5', 'N4', 'N3', 'N2', 'N1', 'ALL', 'FAVORITES', 'MY_WORDS'];
+const DECK_LABEL: Record<Deck, string> = {
+  N5: 'N5', N4: 'N4', N3: 'N3', N2: 'N2', N1: 'N1',
+  ALL: 'Mix', FAVORITES: 'saved', MY_WORDS: 'my words',
+};
+function formatDecks(decks: Deck[]): string {
+  return decks.map((deck) => DECK_LABEL[deck]).join(' + ');
+}
 
 type QuizResult = { score: number; total: number; answers: Array<{ word: Word; choice: string; correct: boolean }>; level: string; finishedAt: string };
 type HistoryEntry = { date: string; score: number; total: number };
@@ -413,7 +423,7 @@ function QuizSetup() {
   const [, setLocation] = useLocation();
   const [count, setCount] = useState(10);
   const [customCount, setCustomCount] = useState('');
-  const [level, setLevel] = useState<Deck>('ALL');
+  const [decks, setDecks] = useState<Deck[]>(['ALL']);
   const [direction, setDirection] = useState<'meaning' | 'word'>('meaning');
   const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
   const [cardSecondsInput, setCardSecondsInput] = useState('15');
@@ -422,29 +432,46 @@ function QuizSetup() {
   const [savedListId, setSavedListId] = useState<string>(() => loadActiveListId(loadWordLists()));
   const savedList = lists.find((item) => item.id === savedListId);
   // Read once per visit, the same way the save slots above are read — this
-  // powers the "Cabinet + yours" drawer (built-in cabinet + personal words).
-  const [customWordCount] = useState<number>(() => loadCustomWords().length);
+  // powers the "My words" drawer (the user's personal-drawer words).
+  const [myWords] = useState<Word[]>(() => customWordsToWords(loadCustomWords()));
   const cardSeconds = Math.min(Math.max(Math.round(Number(cardSecondsInput)) || 15, 3), 120);
   const sessionMinutes = Math.min(Math.max(Math.round(Number(sessionMinutesInput)) || 3, 1), 180);
   const totalSaved = lists.reduce((sum, item) => sum + item.wordIds.length, 0);
-  const available = level === 'ALL' ? vocabulary.length : level === 'FAVORITES' ? (savedList?.wordIds.length ?? 0) : level === 'CABINET_PLUS' ? vocabulary.length + customWordCount : vocabulary.filter((word) => word.level === level).length;
+  // Union of every chosen drawer, deduped by word id — so e.g. a saved N4
+  // word is only counted once for "N4 + Saved".
+  const available = useMemo(() => {
+    if (decks.includes('ALL')) return vocabulary.length;
+    const seen = new Set<string>();
+    const selectedLevels = decks.filter((deck): deck is Level => deck !== 'ALL' && deck !== 'FAVORITES' && deck !== 'MY_WORDS');
+    for (const word of vocabulary) if (selectedLevels.includes(word.level)) seen.add(word.id);
+    if (decks.includes('FAVORITES')) for (const word of vocabulary) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
+    if (decks.includes('MY_WORDS')) for (const word of myWords) seen.add(word.id);
+    return seen.size;
+  }, [decks, savedList, myWords]);
+  const toggleDeck = (deck: Deck) => {
+    if (deck === 'ALL') { setDecks(['ALL']); return; }
+    const rest = decks.filter((item) => item !== 'ALL');
+    const isSelected = rest.includes(deck);
+    if (isSelected && rest.length === 1) return; // always keep at least one drawer open
+    setDecks(isSelected ? rest.filter((item) => item !== deck) : [...rest, deck]);
+  };
   useEffect(() => { setCount((current) => Math.min(current, Math.max(available, 1))); }, [available]);
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
     <div className="grid gap-8 lg:grid-cols-[1.1fr_.9fr] lg:items-start">
-      <section className="rounded-[1.75rem] bg-[hsl(var(--secondary))] p-7 text-[hsl(var(--secondary-foreground))] md:p-10"><p className="mono-label mb-5 text-[hsl(var(--secondary-foreground)/.58)]">Quiz deck / warm-up</p><h1 className="font-serif text-5xl leading-[.98] tracking-[-.06em] md:text-6xl">Make some<br /><em className="text-[hsl(var(--accent))]">noise.</em></h1><p className="mt-6 max-w-sm text-sm leading-6 text-[hsl(var(--secondary-foreground)/.7)]">A short round is better than a perfect plan. Pick a drawer, set your pace, and see what sticks.</p><div className="mt-12 flex items-center gap-3 text-xs text-[hsl(var(--secondary-foreground)/.6)]"><Keyboard size={16} /> Press 1–4 to answer quickly</div></section>
+      <section className="rounded-[1.75rem] bg-[hsl(var(--secondary))] p-7 text-[hsl(var(--secondary-foreground))] md:p-10"><p className="mono-label mb-5 text-[hsl(var(--secondary-foreground)/.58)]">Quiz deck / warm-up</p><h1 className="font-serif text-5xl leading-[.98] tracking-[-.06em] md:text-6xl">Make some<br /><em className="text-[hsl(var(--accent))]">noise.</em></h1><p className="mt-6 max-w-sm text-sm leading-6 text-[hsl(var(--secondary-foreground)/.7)]">A short round is better than a perfect plan. Pick one or more drawers, set your pace, and see what sticks.</p><div className="mt-12 flex items-center gap-3 text-xs text-[hsl(var(--secondary-foreground)/.6)]"><Keyboard size={16} /> Press 1–4 to answer quickly</div></section>
       <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8" data-testid="quiz-setup">
         <p className="mono-label mb-2 text-muted-foreground">Set the table</p><h2 className="font-serif text-3xl">Round settings</h2>
         <div className="mt-8 space-y-7">
            <div><label className="mb-3 block text-sm font-bold">How many cards?</label><div className="grid grid-cols-4 gap-2">{[5, 10, 20, 30].map((option) => <button key={option} onClick={() => { setCount(Math.min(option, available)); setCustomCount(''); }} className={cx(!customCount && count === option ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted', 'rounded-xl border py-3 text-sm font-bold')} data-testid={`quiz-count-${option}`}>{option}</button>)}</div><div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-custom-count" className="text-xs font-semibold text-muted-foreground">Custom</label><input id="quiz-custom-count" type="number" min="1" max={available} value={customCount} onChange={(event) => { const raw = event.target.value; setCustomCount(raw); const next = Number(raw); if (raw && Number.isFinite(next)) setCount(Math.min(Math.max(next, 1), available)); }} placeholder={`1–${available}`} className="h-10 w-28 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-custom-count" /><span className="text-xs text-muted-foreground">cards, up to {available.toLocaleString()}</span></div></div>
-           <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button><button onClick={() => totalSaved > 0 && setLevel('FAVORITES')} disabled={totalSaved === 0} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', level === 'FAVORITES' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-favorites"><Heart size={14} fill={level === 'FAVORITES' ? 'currentColor' : 'none'} /> Saved</button><button onClick={() => setLevel('CABINET_PLUS')} disabled={customWordCount === 0} title={customWordCount === 0 ? 'Add words in "My words" first' : undefined} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', level === 'CABINET_PLUS' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-cabinet-plus"><BookPlus size={14} /> Cabinet + yours</button></div>
-             {level === 'FAVORITES' && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-muted p-2"><span className="mono-label px-1 text-muted-foreground">Which save slot?</span><div className="flex flex-1 flex-wrap gap-1.5">{lists.map((item) => <button key={item.id} onClick={() => setSavedListId(item.id)} className={cx('rounded-lg border px-2.5 py-1.5 text-xs font-bold', savedListId === item.id ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card text-muted-foreground hover:bg-muted')} data-testid={`quiz-saved-list-${item.id}`}>{item.name} <span className="opacity-60">({item.wordIds.length})</span></button>)}</div></div>}
-             <p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available{level === 'FAVORITES' && available === 0 ? ' — save some words to this slot in the Cabinet first' : ''}{level === 'CABINET_PLUS' ? ` — the whole cabinet plus ${customWordCount} of your word${customWordCount === 1 ? '' : 's'}` : ''}</p></div>
+           <div><label className="mb-3 block text-sm font-bold">Open drawers</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => toggleDeck(option)} aria-pressed={decks.includes(option)} className={cx('rounded-xl border py-3 text-sm font-bold', decks.includes(option) ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => toggleDeck('ALL')} aria-pressed={decks.length === 1 && decks[0] === 'ALL'} className={cx('rounded-xl border py-3 text-sm font-bold', decks.length === 1 && decks[0] === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button><button onClick={() => toggleDeck('FAVORITES')} disabled={totalSaved === 0} aria-pressed={decks.includes('FAVORITES')} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', decks.includes('FAVORITES') ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-favorites"><Heart size={14} fill={decks.includes('FAVORITES') ? 'currentColor' : 'none'} /> Saved</button><button onClick={() => toggleDeck('MY_WORDS')} disabled={myWords.length === 0} title={myWords.length === 0 ? 'Add words in "My words" first' : undefined} aria-pressed={decks.includes('MY_WORDS')} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', decks.includes('MY_WORDS') ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-my-words"><BookPlus size={14} /> My words</button></div>
+             {decks.includes('FAVORITES') && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-muted p-2"><span className="mono-label px-1 text-muted-foreground">Which save slot?</span><div className="flex flex-1 flex-wrap gap-1.5">{lists.map((item) => <button key={item.id} onClick={() => setSavedListId(item.id)} className={cx('rounded-lg border px-2.5 py-1.5 text-xs font-bold', savedListId === item.id ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card text-muted-foreground hover:bg-muted')} data-testid={`quiz-saved-list-${item.id}`}>{item.name} <span className="opacity-60">({item.wordIds.length})</span></button>)}</div></div>}
+             <p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available{decks.includes('FAVORITES') && available === 0 ? ' — save some words to this slot in the Cabinet first' : ''}{decks.includes('MY_WORDS') ? ` — including ${myWords.length} of your word${myWords.length === 1 ? '' : 's'}` : ''}</p><p className="mt-1 text-xs text-muted-foreground">Tip: combine drawers freely — e.g. N4 + My words. Mixed stays on its own.</p></div>
            <div><label className="mb-3 block text-sm font-bold">Quiz type</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setDirection('meaning')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'meaning' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-meaning"><BookOpen size={15} /> Choose meaning</button><button onClick={() => setDirection('word')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'word' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-word"><Keyboard size={15} /> Choose Japanese</button></div><p className="mt-2 text-xs text-muted-foreground">Japanese choices include kanji and furigana.</p></div>
            <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> Per question</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>
              {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSecondsInput} onChange={(event) => setCardSecondsInput(event.target.value)} onBlur={() => setCardSecondsInput(String(cardSeconds))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="180" value={sessionMinutesInput} onChange={(event) => setSessionMinutesInput(event.target.value)} onBlur={() => setSessionMinutesInput(String(sessionMinutes))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–180)</span></div>}
              <p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? `Each card gives you ${cardSeconds} second${cardSeconds === 1 ? '' : 's'} to answer.` : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
-        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}${level === 'FAVORITES' ? `&listId=${savedListId}` : ''}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
+        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&decks=${decks.join(',')}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}${decks.includes('FAVORITES') ? `&listId=${savedListId}` : ''}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
       </section>
     </div>
   </div>;
@@ -453,7 +480,8 @@ function QuizSetup() {
 function QuizActive({ params }: { params: URLSearchParams }) {
   const [, setLocation] = useLocation();
   const count = Number(params.get('count')) || 10;
-  const level = (params.get('level') || 'ALL') as Deck;
+  const rawDecks = (params.get('decks') || 'ALL').split(',').filter((item): item is Deck => (ALL_DECKS as string[]).includes(item));
+  const decks: Deck[] = rawDecks.length > 0 ? rawDecks : ['ALL'];
   const direction = params.get('direction') === 'word' ? 'word' : 'meaning';
   const timerMode = params.get('timerMode') === 'session' ? 'session' : 'question';
   const cardSeconds = Number(params.get('cardSeconds')) || 15;
@@ -463,13 +491,23 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     if (!listId) return [];
     return loadWordLists().find((item) => item.id === listId)?.wordIds ?? [];
   });
-  // Original decks draw only from the built-in vocabulary (unchanged).
-  // 'CABINET_PLUS' is the one deck where the user's personal-drawer words
-  // join in: the whole cabinet + their own additions.
+  // "My words" (the personal drawer) only enters the round when the user
+  // actually picked that drawer.
+  const [myWords] = useState<Word[]>(() => (decks.includes('MY_WORDS') ? customWordsToWords(loadCustomWords()) : []));
+  // Any combination of drawers: 'Mixed' alone is the original full cabinet;
+  // otherwise the pool is the union of the chosen level drawers, the chosen
+  // save slot, and the personal-drawer words when picked. Deduped by id so
+  // e.g. a saved N4 word is not doubled in "N4 + Saved".
   const [pool] = useState<Word[]>(() => {
-    if (level === 'FAVORITES') return vocabulary.filter((word) => savedWordIds.includes(word.id));
-    if (level === 'CABINET_PLUS') return [...vocabulary, ...customWordsToWords(loadCustomWords())];
-    return level === 'ALL' ? vocabulary : vocabulary.filter((word) => word.level === level);
+    if (decks.includes('ALL')) return vocabulary;
+    const seen = new Set<string>();
+    const next: Word[] = [];
+    const collect = (item: Word) => { if (!seen.has(item.id)) { seen.add(item.id); next.push(item); } };
+    const selectedLevels = decks.filter((deck): deck is Level => deck !== 'ALL' && deck !== 'FAVORITES' && deck !== 'MY_WORDS');
+    for (const item of vocabulary) if (selectedLevels.includes(item.level)) collect(item);
+    if (decks.includes('FAVORITES')) for (const item of vocabulary) if (savedWordIds.includes(item.id)) collect(item);
+    for (const item of myWords) collect(item);
+    return next;
   });
   const [cards] = useState<Word[]>(() => shuffle(pool).slice(0, count));
   const [index, setIndex] = useState(0);
@@ -481,10 +519,10 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const finishedRef = useRef(false);
 
   const word = cards[index];
-  // Distractors come from the full mixed pool for 'CABINET_PLUS' (so your
-  // own words can be decoys too); original decks keep distracting from the
-  // whole built-in cabinet exactly as before.
-  const distractorSource = level === 'CABINET_PLUS' ? pool : vocabulary;
+  // Distractors keep distracting from the whole built-in cabinet exactly as
+  // before; when "My words" is part of the round, your words join in as
+  // possible decoys too.
+  const distractorSource = myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary;
   const choices = useMemo(
     () => word ? shuffle([word, ...shuffle(distractorSource.filter((item) => item.id !== word.id)).slice(0, 3)]) : [],
     [word, distractorSource],
@@ -494,7 +532,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     if (finishedRef.current) return;
     finishedRef.current = true;
     const score = finalResults.filter((item) => item.correct).length;
-    sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score, total: cards.length, answers: finalResults, level, finishedAt: new Date().toISOString() } satisfies QuizResult));
+    sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score, total: cards.length, answers: finalResults, level: formatDecks(decks), finishedAt: new Date().toISOString() } satisfies QuizResult));
     recordHistory({ date: toDateKey(new Date()), score, total: cards.length });
     setLocation('/results');
   };
@@ -580,7 +618,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
 
   const progress = ((index + (selected ? 1 : 0)) / cards.length) * 100;
   return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
-     <div className="mb-8 flex items-center justify-between"><div><p className="mono-label text-muted-foreground">Live round / {level === 'ALL' ? 'mixed deck' : level === 'FAVORITES' ? 'saved words' : level === 'CABINET_PLUS' ? 'cabinet + yours' : level}</p><p className="mt-2 text-sm font-bold">Card {String(index + 1).padStart(2, '0')} <span className="font-normal text-muted-foreground">of {cards.length}</span></p></div><div className="flex items-center gap-2">{timerMode === 'question' ? <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', selected ? 'border-border text-muted-foreground' : timeLeft <= 5 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {timeLeft}s</span> : <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', sessionTimeLeft <= 30 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {String(Math.floor(sessionTimeLeft / 60)).padStart(2, '0')}:{String(sessionTimeLeft % 60).padStart(2, '0')}</span>}<Link href="/quiz" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-muted" data-testid="button-quit-quiz"><X size={15} /> Exit</Link></div></div>
+     <div className="mb-8 flex items-center justify-between"><div><p className="mono-label text-muted-foreground">Live round / {formatDecks(decks)}</p><p className="mt-2 text-sm font-bold">Card {String(index + 1).padStart(2, '0')} <span className="font-normal text-muted-foreground">of {cards.length}</span></p></div><div className="flex items-center gap-2">{timerMode === 'question' ? <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', selected ? 'border-border text-muted-foreground' : timeLeft <= 5 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {timeLeft}s</span> : <span className={cx('mono-label flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold', sessionTimeLeft <= 30 ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)] text-[hsl(var(--accent))]' : 'border-border text-muted-foreground')} data-testid="quiz-timer"><Clock3 size={14} /> {String(Math.floor(sessionTimeLeft / 60)).padStart(2, '0')}:{String(sessionTimeLeft % 60).padStart(2, '0')}</span>}<Link href="/quiz" className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-muted-foreground hover:bg-muted" data-testid="button-quit-quiz"><X size={15} /> Exit</Link></div></div>
     <div className="mb-10 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[hsl(var(--accent))] transition-[width] duration-500" style={{ width: `${Math.max(progress, 5)}%` }} /></div>
     <section className="animate-pop rounded-[1.75rem] border border-border bg-card p-6 md:p-12" data-testid="quiz-card">
        <div className="flex items-center justify-between"><LevelPill level={word.level} /><span className="mono-label flex items-center gap-2 text-muted-foreground"><Volume2 size={14} /> {direction === 'meaning' ? 'choose the meaning' : 'choose the Japanese word'}</span></div>
@@ -608,7 +646,7 @@ function Results() {
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
     <div className="grid gap-6 lg:grid-cols-[.82fr_1.18fr]">
       <section className={cx('relative overflow-hidden rounded-[1.75rem] p-7 md:p-10', passed ? 'bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))]' : 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]')}><div className="absolute -right-10 -top-10 size-44 rounded-full border-[22px] border-[hsl(var(--accent)/.75)]" /><p className="mono-label relative mb-6 opacity-60">Round complete / report</p><div className="relative"><div className="flex items-end gap-3"><span className="font-serif text-8xl leading-none tracking-[-.08em]">{percent}</span><span className="mb-2 font-mono text-2xl">%</span></div><h1 className="mt-7 font-serif text-4xl tracking-[-.04em]">{passed ? 'The words are landing.' : 'Keep the drawer open.'}</h1><p className="mt-3 max-w-sm text-sm leading-6 opacity-70">{passed ? 'That was a strong little session. Your next recall will have more to hold onto.' : 'A missed word is not a lost word. It is simply asking for another visit.'}</p></div><div className="relative mt-10 flex gap-2"><button onClick={() => setLocation('/quiz')} className="flex items-center gap-2 rounded-xl bg-[hsl(var(--accent))] px-4 py-3 text-sm font-bold text-[hsl(var(--foreground))]" data-testid="button-retry-quiz"><RotateCcw size={15} /> Try again</button><button onClick={() => setLocation('/')} className="rounded-xl border border-current/20 px-4 py-3 text-sm font-bold opacity-80 hover:opacity-100" data-testid="button-back-cabinet">Cabinet</button></div></section>
-      <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-9"><div className="flex items-start justify-between"><div><p className="mono-label text-muted-foreground">Your scorecard</p><h2 className="mt-2 font-serif text-3xl">A tidy debrief.</h2></div><div className="grid size-12 place-items-center rounded-xl bg-[hsl(var(--accent)/.15)] text-[hsl(var(--accent))]"><Trophy size={22} /></div></div><div className="mt-8 grid grid-cols-3 gap-3"><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Correct</p><p className="mt-2 font-serif text-2xl">{result.score}</p></div><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Missed</p><p className="mt-2 font-serif text-2xl">{result.total - result.score}</p></div><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Deck</p><p className="mt-2 font-serif text-2xl">{result.level === 'ALL' ? 'Mix' : result.level === 'CABINET_PLUS' ? 'Cabinet + yours' : result.level}</p></div></div><div className="mt-8"><div className="mb-3 flex justify-between text-xs font-bold"><span>Recall strength</span><span className="text-[hsl(var(--secondary))]">{result.score} of {result.total}</span></div><div className="flex h-3 gap-1 overflow-hidden rounded-full bg-muted">{result.answers.map((answer, index) => <span key={`${answer.word.id}-${index}`} className={cx('flex-1 rounded-sm', answer.correct ? 'bg-[hsl(var(--secondary))]' : 'bg-[hsl(var(--accent))]')} />)}</div></div></section>
+      <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-9"><div className="flex items-start justify-between"><div><p className="mono-label text-muted-foreground">Your scorecard</p><h2 className="mt-2 font-serif text-3xl">A tidy debrief.</h2></div><div className="grid size-12 place-items-center rounded-xl bg-[hsl(var(--accent)/.15)] text-[hsl(var(--accent))]"><Trophy size={22} /></div></div><div className="mt-8 grid grid-cols-3 gap-3"><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Correct</p><p className="mt-2 font-serif text-2xl">{result.score}</p></div><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Missed</p><p className="mt-2 font-serif text-2xl">{result.total - result.score}</p></div><div className="rounded-xl bg-muted p-3"><p className="mono-label text-muted-foreground">Deck</p><p className="mt-2 font-serif text-2xl">{result.level === 'ALL' ? 'Mix' : result.level}</p></div></div><div className="mt-8"><div className="mb-3 flex justify-between text-xs font-bold"><span>Recall strength</span><span className="text-[hsl(var(--secondary))]">{result.score} of {result.total}</span></div><div className="flex h-3 gap-1 overflow-hidden rounded-full bg-muted">{result.answers.map((answer, index) => <span key={`${answer.word.id}-${index}`} className={cx('flex-1 rounded-sm', answer.correct ? 'bg-[hsl(var(--secondary))]' : 'bg-[hsl(var(--accent))]')} />)}</div></div></section>
     </div>
     <section className="mt-12"><SectionTitle eyebrow="Review drawer" title={missed.length ? 'Words to revisit' : 'Nothing slipped through'} action={missed.length ? <span className="text-xs text-muted-foreground">{missed.length} card{missed.length === 1 ? '' : 's'} marked</span> : undefined} />{missed.length ? <div className="divide-y divide-border rounded-2xl border border-border bg-card">{missed.map(({ word }) => <div key={word.id} className="flex items-center gap-4 p-4 md:p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-muted"><span className="kanji-display text-2xl">{word.expression}</span></div><div className="min-w-0 flex-1"><p className="font-semibold">{word.reading || word.expression}</p><p className="truncate text-sm text-muted-foreground">{word.meaning}</p></div><LevelPill level={word.level} /></div>)}</div> : <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center"><Sparkles className="mx-auto text-[hsl(var(--accent))]" size={24} /><p className="mt-3 font-serif text-2xl">Clean sweep.</p><p className="mt-2 text-sm text-muted-foreground">Your cabinet is very proud of you.</p></div>}</section>
   </div>;
