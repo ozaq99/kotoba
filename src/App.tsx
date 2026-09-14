@@ -53,24 +53,33 @@ function cx(...classes: Array<string | false | null | undefined>) { return class
 // Save slots: multiple renamable word lists, one of which is "active" (what
 // the heart button on a word card saves into). Reads/writes localStorage
 // directly, mirroring how history/favorites already worked in this file.
+// NOTE: MAX_SAVE_SLOTS limits the number of SLOTS (lists) you can create —
+// it does NOT limit how many words you can save inside a single slot.
+const MAX_SAVE_SLOTS = 10;
+
 function useWordLists() {
   const [lists, setLists] = useState<WordList[]>(() => loadWordLists());
   const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
   useEffect(() => { persistWordLists(lists); }, [lists]);
   useEffect(() => { if (activeId) persistActiveListId(activeId); }, [activeId]);
   const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
+
+  const slotLimitReached = lists.length >= MAX_SAVE_SLOTS;
+
   const createList = (name: string) => {
+    if (slotLimitReached) return activeId;
     const { lists: next, id } = createWordList(lists, name);
     setLists(next); setActiveId(id); return id;
   };
   const renameList = (id: string, name: string) => setLists((current) => renameWordList(current, id, name));
   const deleteList = (id: string) => setLists((current) => {
+    if (current.length <= 1) return current;
     const next = deleteWordList(current, id);
     if (activeId === id) setActiveId(next[0].id);
     return next;
   });
   const toggleWord = (wordId: string, listId: string = activeId) => setLists((current) => toggleWordInList(current, listId, wordId));
-  return { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, toggleWord };
+  return { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, toggleWord, slotLimitReached, maxSlots: MAX_SAVE_SLOTS };
 }
 
 function Logo() {
@@ -146,10 +155,14 @@ function WordCard({ word, favorite, onFavorite }: { word: Word; favorite: boolea
 }
 
 function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists> }) {
-  const { lists, activeList, activeId, setActiveId, createList, renameList, deleteList } = wordLists;
+  const { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, slotLimitReached, maxSlots } = wordLists;
   const [open, setOpen] = useState(false);
   if (!activeList) return null;
   const handleCreate = () => {
+    if (slotLimitReached) {
+      window.alert(`You can only have ${maxSlots} save slots. Delete one before creating a new one.`);
+      return;
+    }
     const name = window.prompt('Name your new save slot:', `Save ${lists.length + 1}`);
     if (name && name.trim()) createList(name);
   };
@@ -171,7 +184,10 @@ function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists>
     {open && <>
       <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
       <div className="absolute left-0 top-[calc(100%+6px)] z-40 w-72 rounded-xl border border-border bg-card p-2 shadow-[var(--shadow-md)]" data-testid="menu-save-slots">
-        <p className="mono-label px-2 pb-2 pt-1 text-muted-foreground">Save slots</p>
+        <div className="flex items-center justify-between px-2 pb-2 pt-1">
+          <p className="mono-label text-muted-foreground">Save slots</p>
+          <span className="mono-label text-muted-foreground">{lists.length}/{maxSlots}</span>
+        </div>
         <div className="max-h-64 space-y-1 overflow-y-auto">
           {lists.map((list) => <div key={list.id} className={cx('group flex items-center gap-1 rounded-lg px-2 py-2', list.id === activeId ? 'bg-[hsl(var(--secondary)/.13)]' : 'hover:bg-muted')}>
             <button onClick={() => { setActiveId(list.id); setOpen(false); }} className="flex flex-1 items-center justify-between gap-2 text-left" data-testid={`button-select-slot-${list.id}`}>
@@ -182,7 +198,20 @@ function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists>
             {lists.length > 1 && <button onClick={() => handleDelete(list)} aria-label={`Delete ${list.name}`} className="rounded-md p-1.5 text-muted-foreground opacity-0 hover:bg-[hsl(var(--destructive)/.14)] hover:text-[hsl(var(--destructive))] group-hover:opacity-100" data-testid={`button-delete-slot-${list.id}`}><Trash2 size={13} /></button>}
           </div>)}
         </div>
-        <button onClick={handleCreate} className="mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed border-border px-2 py-2 text-sm font-semibold text-muted-foreground hover:border-[hsl(var(--secondary))] hover:text-[hsl(var(--secondary))]" data-testid="button-create-slot"><Plus size={15} /> New save slot</button>
+        <button
+          onClick={handleCreate}
+          disabled={slotLimitReached}
+          title={slotLimitReached ? `Limit of ${maxSlots} save slots reached` : undefined}
+          className={cx(
+            'mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed px-2 py-2 text-sm font-semibold',
+            slotLimitReached
+              ? 'cursor-not-allowed border-border/60 text-muted-foreground/50'
+              : 'border-border text-muted-foreground hover:border-[hsl(var(--secondary))] hover:text-[hsl(var(--secondary))]',
+          )}
+          data-testid="button-create-slot"
+        >
+          <Plus size={15} /> {slotLimitReached ? `Limit reached (${maxSlots})` : 'New save slot'}
+        </button>
       </div>
     </>}
   </div>;
