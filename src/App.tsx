@@ -324,24 +324,29 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     setResults((current) => [...current, { word, choice: '(no answer)', correct: false }]);
   };
 
-  const lastTimedIndexRef = useRef(-1);
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // One question, one interval, fully self-contained. `remaining` is a plain
+  // local variable (not state) so the countdown's own logic never depends on
+  // React having already committed a re-render — that dependency is exactly
+  // what caused the earlier freeze/race bugs.
   useEffect(() => {
     if (timerMode !== 'question') return;
-    if (lastTimedIndexRef.current !== index) {
-      // Just arrived on this card — reset the clock and stop here. Do NOT
-      // fall through to the timeout check below in this same pass, since
-      // `timeLeft` here is still whatever was left on the PREVIOUS card
-      // (often 0, right after a timeout). Checking it now would fire a
-      // false timeout on the new card before the reset even takes effect.
-      lastTimedIndexRef.current = index;
-      setTimeLeft(cardSeconds);
-      return;
-    }
+    setTimeLeft(cardSeconds);
     if (selected) return;
-    if (timeLeft <= 0) { timeout(); return; }
-    const id = setTimeout(() => setTimeLeft((value) => value - 1), 1000);
-    return () => clearTimeout(id);
-  }, [index, timeLeft, selected, timerMode, cardSeconds]);
+    let remaining = cardSeconds;
+    const id = window.setInterval(() => {
+      if (selectedRef.current) { window.clearInterval(id); return; }
+      remaining -= 1;
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        window.clearInterval(id);
+        timeout();
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [index, timerMode, cardSeconds]);
 
   useEffect(() => {
     if (timerMode !== 'session') return;
