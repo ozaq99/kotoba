@@ -69,6 +69,22 @@ function computeStreaks(history: HistoryEntry[]) {
 
 function cx(...classes: Array<string | false | null | undefined>) { return classes.filter(Boolean).join(' '); }
 
+// Deterministic shuffle: the same items + the same seed ALWAYS produce the
+// same order. We use it for the quiz options so their order becomes a pure
+// function of the card — no matter how often React re-renders or re-evaluates
+// the memo, the four buttons can never swap around while a card is on screen.
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  const arr = [...items];
+  let s = seed % 2147483647;
+  if (s <= 0) s += 2147483646;
+  const rand = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr;
+}
+
 // Save slots: multiple renamable word lists, one of which is "active" (what
 // the heart button on a word card saves into). Reads/writes localStorage
 // directly, mirroring how history/favorites already worked in this file.
@@ -511,6 +527,9 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   });
   const [cards] = useState<Word[]>(() => shuffle(pool).slice(0, count));
   const [index, setIndex] = useState(0);
+  // One random number per quiz session. It lets each round shuffle differently
+  // while staying fixed for the whole round (so it can't re-roll mid-card).
+  const [sessionSeed] = useState(() => Math.floor(Math.random() * 2147483646) + 1);
   const [selected, setSelected] = useState<string | null>(null);
   const [results, setResults] = useState<QuizResult['answers']>([]);
   const [streak, setStreak] = useState(0);
@@ -519,18 +538,24 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const finishedRef = useRef(false);
 
   const word = cards[index];
+  // Stable per-card seed: session seed mixed with the card index, so every
+  // card gets a different option order that never changes while the timer
+  // runs. Because it's derived (not state) it can't drift between renders.
+  const choiceSeed = (sessionSeed + (index + 1) * 7919) % 2147483646 || 1;
   // Distractors keep distracting from the whole built-in cabinet exactly as
   // before; when "My words" is part of the round, your words join in as
-  // possible decoys too. MUST be memoized: a fresh array on every render
-  // would re-shuffle the options on each render — and the quiz timer
-  // re-renders every second, which made the options "keep moving".
+  // possible decoys too. Memoized so the array reference is stable.
   const distractorSource = useMemo(
     () => (myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary),
     [myWords],
   );
+  // NOTE: the order is produced by seededShuffle (deterministic), NOT by the
+  // random shuffle(). That's what actually stops the options from swapping:
+  // even if React re-runs this memo, the same card + seed gives the same
+  // order, so the buttons can never move mid-card.
   const choices = useMemo(
-    () => word ? shuffle([word, ...shuffle(distractorSource.filter((item) => item.id !== word.id)).slice(0, 3)]) : [],
-    [word, distractorSource],
+    () => word ? [word, ...seededShuffle(distractorSource.filter((item) => item.id !== word.id), choiceSeed).slice(0, 3)] : [],
+    [word, distractorSource, choiceSeed],
   );
 
   const finish = (finalResults: QuizResult['answers']) => {
