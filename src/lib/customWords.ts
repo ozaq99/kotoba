@@ -2,8 +2,8 @@
 // User-added vocabulary — the "personal drawer". Words added here live in
 // their own localStorage key and are NEVER merged into the original
 // CSV-backed `vocabulary` exported from ./vocabulary. The two collections
-// stay separate on purpose: the Cabinet browses the built-in words, while
-// the /custom page manages only the entries stored below.
+// stay separate on purpose: the Cabinet shows both (tagging these
+// "My words"), while the /custom page manages the entries stored below.
 
 import { type Level, type Word } from './vocabulary';
 
@@ -92,3 +92,4 @@ export function deleteCustomWord(words: CustomWord[], id: string): CustomWord[] 
 export function customWordsToWords(words: CustomWord[]): Word[] {
   return words.map((word) => ({ id: word.id, expression: word.expression, reading: word.reading, meaning: word.meaning, level: word.level, tags: [] }));
 }
+

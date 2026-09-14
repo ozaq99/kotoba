@@ -193,12 +193,20 @@ function StatCard({ icon: Icon, label, value, note, color }: { icon: typeof Flam
   return <div className="soft-shadow rounded-2xl border border-border bg-card p-4"><div className="mb-4 flex items-center justify-between"><span className="mono-label text-muted-foreground">{label}</span><span className="grid size-8 place-items-center rounded-lg" style={{ color, backgroundColor: `${color}1c` }}><Icon size={16} /></span></div><p className="font-serif text-3xl">{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p></div>;
 }
 
-function WordCard({ word, favorite, onFavorite }: { word: Word; favorite: boolean; onFavorite: () => void }) {
+// One card shape for every word in the Cabinet. `source` says which
+// collection the word belongs to: 'original' keeps the heart (saves into
+// the active slot) and an "Original" footer, while 'my' words — coming
+// from the personal drawer — get a pencil shortcut back to /custom and a
+// "My words" footer so the two card types are easy to tell apart.
+function WordCard({ word, source, favorite, onFavorite }: { word: Word; source: 'original' | 'my'; favorite?: boolean; onFavorite?: () => void }) {
+  const mine = source === 'my';
   return <article className="group relative overflow-hidden rounded-2xl border border-border bg-card p-5 transition-transform hover:-translate-y-1 hover:shadow-[var(--shadow-md)]" data-testid={`word-card-${word.id}`}>
     <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 rounded-full opacity-40" style={{ backgroundColor: levelColor[word.level] }} />
-    <div className="relative flex items-start justify-between"><LevelPill level={word.level} /><button onClick={onFavorite} aria-label={favorite ? `Unfavorite ${word.expression}` : `Favorite ${word.expression}`} className={cx('rounded-lg p-1.5 transition-colors hover:bg-muted', favorite ? 'text-[hsl(var(--accent))]' : 'text-muted-foreground')} data-testid={`button-favorite-${word.id}`}><Heart size={17} fill={favorite ? 'currentColor' : 'none'} /></button></div>
-    <p className="kanji-display mt-7 text-[2.7rem] leading-none">{word.expression}</p><p className="mt-2 text-sm font-medium text-[hsl(var(--secondary))]">{word.reading}</p><p className="mt-4 line-clamp-2 min-h-10 text-sm leading-relaxed text-muted-foreground">{word.meaning}</p>
-    <div className="mt-5 flex items-center gap-2 border-t border-border pt-3 text-[11px] text-muted-foreground"><BookOpen size={13} /> tap to keep it close</div>
+    <div className="relative flex items-start justify-between"><LevelPill level={word.level} />{mine
+      ? <Link href="/custom" aria-label={`Edit ${word.expression} in My words`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" data-testid={`button-edit-my-${word.id}`}><Pencil size={17} /></Link>
+      : <button onClick={onFavorite} aria-label={favorite ? `Unfavorite ${word.expression}` : `Favorite ${word.expression}`} className={cx('rounded-lg p-1.5 transition-colors hover:bg-muted', favorite ? 'text-[hsl(var(--accent))]' : 'text-muted-foreground')} data-testid={`button-favorite-${word.id}`}><Heart size={17} fill={favorite ? 'currentColor' : 'none'} /></button>}</div>
+    <p className="kanji-display mt-7 text-[2.7rem] leading-none">{word.expression}</p>{word.reading && <p className="mt-2 text-sm font-medium text-[hsl(var(--secondary))]">{word.reading}</p>}<p className="mt-4 line-clamp-2 min-h-10 text-sm leading-relaxed text-muted-foreground">{word.meaning}</p>
+    <div className="mt-5 flex items-center gap-2 border-t border-border pt-3 text-[11px] text-muted-foreground">{mine ? <><BookPlus size={13} /> My words</> : <><BookOpen size={13} /> Original</>}</div>
   </article>;
 }
 
@@ -305,7 +313,7 @@ function CustomWords() {
       <div className="relative max-w-2xl">
         <p className="mono-label mb-5 text-[hsl(var(--secondary-foreground)/.55)]">Personal drawer / 002</p>
         <h1 className="font-serif text-5xl leading-[.96] tracking-[-.06em] md:text-7xl">A drawer of<br /><em className="text-[hsl(var(--accent))]">your own.</em></h1>
-        <p className="mt-6 max-w-md text-sm leading-6 text-[hsl(var(--secondary-foreground)/.68)]">Words you add live here — kept apart from the cabinet's original collection. Add a word, fix it when it changes, or clear it out any time.</p>
+        <p className="mt-6 max-w-md text-sm leading-6 text-[hsl(var(--secondary-foreground)/.68)]">Words you add live here — and show up in the Cabinet too, clearly tagged as yours. Add a word, fix it when it changes, or clear it out any time.</p>
       </div>
       <span className="absolute bottom-6 right-8 hidden font-mono text-[10px] tracking-[.15em] text-[hsl(var(--secondary-foreground)/.38)] md:block">追加 / YOURS</span>
     </section>
@@ -314,7 +322,7 @@ function CustomWords() {
         <p className="mono-label mb-2 text-muted-foreground">Add an entry</p>
         <h2 className="font-serif text-3xl">A new word.</h2>
         <div className="mt-6"><WordForm initial={EMPTY_DRAFT} submitLabel="Add to drawer" testIdPrefix="add" onSubmit={add} /></div>
-        <p className="mt-5 text-xs leading-5 text-muted-foreground">Stored in its own place, separate from the cabinet's built-in {vocabulary.length.toLocaleString()} words — the two never mix.</p>
+        <p className="mt-5 text-xs leading-5 text-muted-foreground">Stored in its own drawer, apart from the cabinet's built-in {vocabulary.length.toLocaleString()} words — and shown in the Cabinet too, tagged “My words”.</p>
       </section>
       <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8" data-testid="custom-list-card">
         <div className="mb-5">
@@ -397,6 +405,8 @@ function Cabinet() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const wordLists = useWordLists();
   const { activeList, toggleWord } = wordLists;
+  // Personal-drawer words, shown in the Cabinet alongside the built-in set.
+  const { words: myCustomWords } = useCustomWords();
   const [visible, setVisible] = useState(24);
   const [ready, setReady] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
@@ -406,10 +416,20 @@ function Cabinet() {
   const lastScorePct = lastEntry ? Math.round((lastEntry.score / lastEntry.total) * 100) : null;
   const resetProgress = () => { if (!window.confirm('Reset your streak and score history? This cannot be undone.')) return; localStorage.removeItem(HISTORY_KEY); setHistory([]); };
   const activeWordIds = activeList?.wordIds ?? [];
-  const filtered = useMemo(() => vocabulary.filter((word) => {
-    const matchesText = `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(query.toLowerCase());
-    return matchesText && (level === 'ALL' || word.level === level) && (!favoritesOnly || activeWordIds.includes(word.id));
-  }), [query, level, favoritesOnly, activeWordIds]);
+  const myWords = useMemo(() => customWordsToWords(myCustomWords), [myCustomWords]);
+  const myWordIds = useMemo(() => new Set(myWords.map((word) => word.id)), [myWords]);
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    const matches = (word: Word) =>
+      `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(q) &&
+      (level === 'ALL' || word.level === level);
+    // "Saved" means "in the active save slot" — that only applies to the
+    // built-in words, so the personal-drawer cards step aside while it's on.
+    if (favoritesOnly) return vocabulary.filter((word) => matches(word) && activeWordIds.includes(word.id));
+    const mine = myWords.filter(matches);
+    const originals = vocabulary.filter(matches);
+    return [...mine, ...originals];
+  }, [query, level, favoritesOnly, activeWordIds, myWords]);
   return <div className="mx-auto max-w-[1400px] px-5 py-8 pb-28 md:px-10 md:py-12 md:pb-12">
     <section className="relative overflow-hidden rounded-[1.75rem] bg-[hsl(var(--primary))] px-6 py-8 text-[hsl(var(--primary-foreground))] md:px-10 md:py-11">
       <div className="absolute -right-16 -top-24 size-72 rounded-full border-[28px] border-[hsl(var(--accent)/.9)] opacity-80" /><div className="absolute -bottom-16 right-24 size-36 rounded-full border-[18px] border-[hsl(var(--secondary)/.55)]" />
@@ -418,7 +438,7 @@ function Cabinet() {
       <span className="absolute bottom-6 right-8 hidden font-mono text-[10px] tracking-[.15em] text-[hsl(var(--primary-foreground)/.38)] md:block">言葉 / WORDS</span>
     </section>
     <section className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4" data-testid="cabinet-stats">
-      <StatCard icon={Layers3} label="In the cabinet" value={vocabulary.length.toLocaleString()} note="across five levels" color="hsl(194 71% 42%)" />
+      <StatCard icon={Layers3} label="In the cabinet" value={(vocabulary.length + myWords.length).toLocaleString()} note={myWords.length > 0 ? `${myWords.length} of them yours` : 'across five levels'} color="hsl(194 71% 42%)" />
       <StatCard icon={Heart} label="Kept close" value={activeWordIds.length.toString().padStart(2, '0')} note={activeList ? `in "${activeList.name}"` : 'your saved words'} color="hsl(11 77% 61%)" />
       <StatCard icon={Flame} label="Current run" value={`${currentRun} day${currentRun === 1 ? '' : 's'}`} note={bestRun > 0 ? `best: ${bestRun} day${bestRun === 1 ? '' : 's'}` : 'finish a round to start'} color="hsl(38 68% 59%)" />
       <StatCard icon={Target} label="Last score" value={lastScorePct !== null ? `${lastScorePct}%` : '—'} note={lastEntry ? `on ${lastEntry.date}` : 'no quizzes yet'} color="hsl(69 73% 45%)" />
@@ -430,7 +450,9 @@ function Cabinet() {
         <label className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisible(24); }} placeholder="Search kanji, reading, or meaning…" className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-search" /></label>
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"><button onClick={() => { setFavoritesOnly(!favoritesOnly); setVisible(24); }} className={cx('flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-semibold', favoritesOnly ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card')} data-testid="button-favorites-filter"><Heart size={15} fill={favoritesOnly ? 'currentColor' : 'none'} /> Saved</button><span className="h-11 w-px bg-border" />{levels.map((item) => <button key={item} onClick={() => { setLevel(item); setVisible(24); }} className={cx('h-11 shrink-0 rounded-xl border px-3 text-xs font-bold', level === item ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'border-border bg-card text-muted-foreground')} data-testid={`filter-${item}`}>{item === 'ALL' ? 'All levels' : item}</button>)}</div>
       </div>
-      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}><WordCard word={word} favorite={activeWordIds.includes(word.id)} onFavorite={() => toggleWord(word.id)} /></div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
+      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}>{myWordIds.has(word.id)
+                ? <WordCard word={word} source="my" />
+                : <WordCard word={word} source="original" favorite={activeWordIds.includes(word.id)} onFavorite={() => toggleWord(word.id)} />}</div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
     </section>
   </div>;
 }
@@ -695,3 +717,4 @@ function App() {
 }
 
 export default App;
+
