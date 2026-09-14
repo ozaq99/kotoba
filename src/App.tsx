@@ -193,18 +193,14 @@ function StatCard({ icon: Icon, label, value, note, color }: { icon: typeof Flam
   return <div className="soft-shadow rounded-2xl border border-border bg-card p-4"><div className="mb-4 flex items-center justify-between"><span className="mono-label text-muted-foreground">{label}</span><span className="grid size-8 place-items-center rounded-lg" style={{ color, backgroundColor: `${color}1c` }}><Icon size={16} /></span></div><p className="font-serif text-3xl">{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p></div>;
 }
 
-// One card shape for every word in the Cabinet. `source` says which
-// collection the word belongs to: 'original' keeps the heart (saves into
-// the active slot) and an "Original" footer, while 'my' words — coming
-// from the personal drawer — get a pencil shortcut back to /custom and a
-// "My words" footer so the two card types are easy to tell apart.
-function WordCard({ word, source, favorite, onFavorite }: { word: Word; source: 'original' | 'my'; favorite?: boolean; onFavorite?: () => void }) {
+// One card shape for every word in the Cabinet. Original and "My words"
+// cards behave identically — same heart button, both save into the active
+// slot — the footer is the only difference: "Original" vs "My words".
+function WordCard({ word, source, favorite, onFavorite }: { word: Word; source: 'original' | 'my'; favorite: boolean; onFavorite: () => void }) {
   const mine = source === 'my';
   return <article className="group relative overflow-hidden rounded-2xl border border-border bg-card p-5 transition-transform hover:-translate-y-1 hover:shadow-[var(--shadow-md)]" data-testid={`word-card-${word.id}`}>
     <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 rounded-full opacity-40" style={{ backgroundColor: levelColor[word.level] }} />
-    <div className="relative flex items-start justify-between"><LevelPill level={word.level} />{mine
-      ? <Link href="/custom" aria-label={`Edit ${word.expression} in My words`} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" data-testid={`button-edit-my-${word.id}`}><Pencil size={17} /></Link>
-      : <button onClick={onFavorite} aria-label={favorite ? `Unfavorite ${word.expression}` : `Favorite ${word.expression}`} className={cx('rounded-lg p-1.5 transition-colors hover:bg-muted', favorite ? 'text-[hsl(var(--accent))]' : 'text-muted-foreground')} data-testid={`button-favorite-${word.id}`}><Heart size={17} fill={favorite ? 'currentColor' : 'none'} /></button>}</div>
+    <div className="relative flex items-start justify-between"><LevelPill level={word.level} /><button onClick={onFavorite} aria-label={favorite ? `Unfavorite ${word.expression}` : `Favorite ${word.expression}`} className={cx('rounded-lg p-1.5 transition-colors hover:bg-muted', favorite ? 'text-[hsl(var(--accent))]' : 'text-muted-foreground')} data-testid={`button-favorite-${word.id}`}><Heart size={17} fill={favorite ? 'currentColor' : 'none'} /></button></div>
     <p className="kanji-display mt-7 text-[2.7rem] leading-none">{word.expression}</p>{word.reading && <p className="mt-2 text-sm font-medium text-[hsl(var(--secondary))]">{word.reading}</p>}<p className="mt-4 line-clamp-2 min-h-10 text-sm leading-relaxed text-muted-foreground">{word.meaning}</p>
     <div className="mt-5 flex items-center gap-2 border-t border-border pt-3 text-[11px] text-muted-foreground">{mine ? <><BookPlus size={13} /> My words</> : <><BookOpen size={13} /> Original</>}</div>
   </article>;
@@ -423,9 +419,13 @@ function Cabinet() {
     const matches = (word: Word) =>
       `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(q) &&
       (level === 'ALL' || word.level === level);
-    // "Saved" means "in the active save slot" — that only applies to the
-    // built-in words, so the personal-drawer cards step aside while it's on.
-    if (favoritesOnly) return vocabulary.filter((word) => matches(word) && activeWordIds.includes(word.id));
+    // "Saved" means "in the active save slot" — that now applies to both
+    // the built-in words and the user's own words (the heart works on both).
+    if (favoritesOnly) {
+      const savedMine = myWords.filter((word) => matches(word) && activeWordIds.includes(word.id));
+      const savedOriginals = vocabulary.filter((word) => matches(word) && activeWordIds.includes(word.id));
+      return [...savedMine, ...savedOriginals];
+    }
     const mine = myWords.filter(matches);
     const originals = vocabulary.filter(matches);
     return [...mine, ...originals];
@@ -450,9 +450,7 @@ function Cabinet() {
         <label className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisible(24); }} placeholder="Search kanji, reading, or meaning…" className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-search" /></label>
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"><button onClick={() => { setFavoritesOnly(!favoritesOnly); setVisible(24); }} className={cx('flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-semibold', favoritesOnly ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card')} data-testid="button-favorites-filter"><Heart size={15} fill={favoritesOnly ? 'currentColor' : 'none'} /> Saved</button><span className="h-11 w-px bg-border" />{levels.map((item) => <button key={item} onClick={() => { setLevel(item); setVisible(24); }} className={cx('h-11 shrink-0 rounded-xl border px-3 text-xs font-bold', level === item ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'border-border bg-card text-muted-foreground')} data-testid={`filter-${item}`}>{item === 'ALL' ? 'All levels' : item}</button>)}</div>
       </div>
-      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}>{myWordIds.has(word.id)
-                ? <WordCard word={word} source="my" />
-                : <WordCard word={word} source="original" favorite={activeWordIds.includes(word.id)} onFavorite={() => toggleWord(word.id)} />}</div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
+      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}><WordCard word={word} source={myWordIds.has(word.id) ? 'my' : 'original'} favorite={activeWordIds.includes(word.id)} onFavorite={() => toggleWord(word.id)} /></div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
     </section>
   </div>;
 }
@@ -482,7 +480,11 @@ function QuizSetup() {
     const seen = new Set<string>();
     const selectedLevels = decks.filter((deck): deck is Level => deck !== 'ALL' && deck !== 'FAVORITES' && deck !== 'MY_WORDS');
     for (const word of vocabulary) if (selectedLevels.includes(word.level)) seen.add(word.id);
-    if (decks.includes('FAVORITES')) for (const word of vocabulary) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
+    if (decks.includes('FAVORITES')) {
+      for (const word of vocabulary) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
+      // Saved custom words live in the same slot, so count them too.
+      for (const word of myWords) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
+    }
     if (decks.includes('MY_WORDS')) for (const word of myWords) seen.add(word.id);
     return seen.size;
   }, [decks, savedList, myWords]);
@@ -529,9 +531,10 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     if (!listId) return [];
     return loadWordLists().find((item) => item.id === listId)?.wordIds ?? [];
   });
-  // "My words" (the personal drawer) only enters the round when the user
-  // actually picked that drawer.
-  const [myWords] = useState<Word[]>(() => (decks.includes('MY_WORDS') ? customWordsToWords(loadCustomWords()) : []));
+  // All personal-drawer words, always loaded. The "My words" drawer only
+  // enters the round when the user picked it, but the "Saved" drawer can
+  // contain custom words too — the Cabinet's heart works on them as well.
+  const [myWords] = useState<Word[]>(() => customWordsToWords(loadCustomWords()));
   // Any combination of drawers: 'Mixed' alone is the original full cabinet;
   // otherwise the pool is the union of the chosen level drawers, the chosen
   // save slot, and the personal-drawer words when picked. Deduped by id so
@@ -543,8 +546,11 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     const collect = (item: Word) => { if (!seen.has(item.id)) { seen.add(item.id); next.push(item); } };
     const selectedLevels = decks.filter((deck): deck is Level => deck !== 'ALL' && deck !== 'FAVORITES' && deck !== 'MY_WORDS');
     for (const item of vocabulary) if (selectedLevels.includes(item.level)) collect(item);
-    if (decks.includes('FAVORITES')) for (const item of vocabulary) if (savedWordIds.includes(item.id)) collect(item);
-    for (const item of myWords) collect(item);
+    if (decks.includes('FAVORITES')) {
+      for (const item of vocabulary) if (savedWordIds.includes(item.id)) collect(item);
+      for (const item of myWords) if (savedWordIds.includes(item.id)) collect(item);
+    }
+    if (decks.includes('MY_WORDS')) for (const item of myWords) collect(item);
     return next;
   });
   const [cards] = useState<Word[]>(() => shuffle(pool).slice(0, count));
@@ -568,7 +574,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   // before; when "My words" is part of the round, your words join in as
   // possible decoys too. Memoized so the array reference is stable.
   const distractorSource = useMemo(
-    () => (myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary),
+    () => (decks.includes('MY_WORDS') && myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary),
     [myWords],
   );
   // NOTE: the order is produced by seededShuffle (deterministic), NOT by the
