@@ -29,7 +29,6 @@ export default function Login() {
         <button type="submit" disabled={loading} className="w-full rounded-xl bg-[hsl(var(--primary))] py-3 text-sm font-bold text-[hsl(var(--primary-foreground))]">
           {loading ? 'Logging in...' : 'Log in'}
         </button>
-        <p className="text-sm text-muted-foreground">No account? <Link href="/signup" className="font-semibold text-[hsl(var(--secondary))]">Sign up</Link></p>
       </form>
     </div>
   );

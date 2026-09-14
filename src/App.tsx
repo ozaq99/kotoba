@@ -1,6 +1,6 @@
 import Login from '@/auth/Login';
-import Signup from '@/auth/Signup';
 import { useAuth } from '@/auth/useAuth';
+import { ProtectedRoute } from '@/auth/ProtectedRoute';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
@@ -177,7 +177,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="hidden items-center gap-2 text-sm text-muted-foreground md:flex"><span className="mono-label">Mon 24 Jun 2024</span><span className="mx-1 text-border">/</span><span>Keep the words close.</span></div>
       <div className="flex items-center gap-3">
         <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-[hsl(var(--secondary))]" /> offline-ready</div>
-        {user ? (
+        {user && (
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">{user.email}</span>
             <button
@@ -189,10 +189,6 @@ function Shell({ children }: { children: React.ReactNode }) {
               {user.email?.[0].toUpperCase()}
             </button>
           </div>
-        ) : (
-          <Link href="/login" className="rounded-full bg-[hsl(var(--primary))] px-4 py-2 text-sm font-bold text-[hsl(var(--primary-foreground))]">
-            Log in
-          </Link>
         )}
       </div>
     </header>
@@ -738,8 +734,14 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Shell><Switch><Route path="/" component={Cabinet} /><Route path="/quiz" component={Quiz} /><Route path="/custom" component={CustomWords} /><Route path="/results" component={Results} /><Route path="/login" component={Login} />
-<Route path="/signup" component={Signup} /><Route component={NotFound} /></Switch></Shell></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Shell><Switch>
+    <Route path="/" component={() => <ProtectedRoute><Cabinet /></ProtectedRoute>} />
+    <Route path="/quiz" component={() => <ProtectedRoute><Quiz /></ProtectedRoute>} />
+    <Route path="/custom" component={() => <ProtectedRoute><CustomWords /></ProtectedRoute>} />
+    <Route path="/results" component={() => <ProtectedRoute><Results /></ProtectedRoute>} />
+    <Route path="/login" component={Login} />
+    <Route component={NotFound} />
+  </Switch></Shell></RoutedErrorBoundary>;
 }
 
 function App() {
@@ -747,3 +749,4 @@ function App() {
 }
 
 export default App;
+
