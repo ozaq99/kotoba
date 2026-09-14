@@ -554,8 +554,8 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   // even if React re-runs this memo, the same card + seed gives the same
   // order, so the buttons can never move mid-card.
   const choices = useMemo(
-  () => word ? seededShuffle([word, ...seededShuffle(distractorSource.filter((item) => item.id !== word.id), choiceSeed).slice(0, 3)], choiceSeed + 1) : [],
-  [word, distractorSource, choiceSeed],
+    () => word ? seededShuffle([word, ...seededShuffle(distractorSource.filter((item) => item.id !== word.id), choiceSeed).slice(0, 3)], choiceSeed + 1) : [],
+    [word, distractorSource, choiceSeed],
   );
   const finish = (finalResults: QuizResult['answers']) => {
     if (finishedRef.current) return;
