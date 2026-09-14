@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
 import {
-  ArrowRight, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Filter,
+  ArrowRight, BookOpen, BookPlus, Check, ChevronDown, CircleHelp, Clock3, Filter,
   Flame, FolderOpen, Headphones, Heart, Home, Keyboard, Layers3, Menu,
   Pencil, Play, Plus, RotateCcw, Search, Sparkles, Star, Target, Trash2,
   Trophy, Volume2, X, Zap,
@@ -12,6 +12,10 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { feedbackAudio, playFeedback, shuffle, vocabulary, type Level, type Word } from '@/lib/vocabulary';
+import {
+  addCustomWord, deleteCustomWord, loadCustomWords, persistCustomWords, updateCustomWord,
+  CUSTOM_LEVELS, type CustomWord, type CustomWordDraft,
+} from '@/lib/customWords';
 import {
   createWordList, deleteWordList, loadActiveListId, loadWordLists, persistActiveListId,
   persistWordLists, renameWordList, toggleWordInList, type WordList,
@@ -82,6 +86,18 @@ function useWordLists() {
   return { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, toggleWord, slotLimitReached, maxSlots: MAX_SAVE_SLOTS };
 }
 
+// Custom ("personal drawer") vocabulary: words the user adds themselves.
+// Persisted under its own localStorage key (see src/lib/customWords.ts), so
+// these entries never mix into the original CSV-backed `vocabulary`.
+function useCustomWords() {
+  const [words, setWords] = useState<CustomWord[]>(() => loadCustomWords());
+  useEffect(() => { persistCustomWords(words); }, [words]);
+  const add = (draft: CustomWordDraft) => setWords((current) => addCustomWord(current, draft).words);
+  const update = (id: string, draft: CustomWordDraft) => setWords((current) => updateCustomWord(current, id, draft));
+  const remove = (id: string) => setWords((current) => deleteCustomWord(current, id));
+  return { words, add, update, remove };
+}
+
 function Logo() {
   return <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
     <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[hsl(var(--accent))] text-[hsl(var(--foreground))] hard-shadow rotate-[-4deg]">
@@ -101,6 +117,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: '/', label: 'Cabinet', icon: Home },
     { href: '/quiz', label: 'Quiz deck', icon: Target },
+    { href: '/custom', label: 'My words', icon: BookPlus },
     { href: '/results', label: 'Review', icon: Trophy },
   ];
   return <div className="paper-grain min-h-[100dvh] bg-background">
@@ -152,6 +169,132 @@ function WordCard({ word, favorite, onFavorite }: { word: Word; favorite: boolea
     <p className="kanji-display mt-7 text-[2.7rem] leading-none">{word.expression}</p><p className="mt-2 text-sm font-medium text-[hsl(var(--secondary))]">{word.reading}</p><p className="mt-4 line-clamp-2 min-h-10 text-sm leading-relaxed text-muted-foreground">{word.meaning}</p>
     <div className="mt-5 flex items-center gap-2 border-t border-border pt-3 text-[11px] text-muted-foreground"><BookOpen size={13} /> tap to keep it close</div>
   </article>;
+}
+
+// Personal drawer: form + rows + page for the user's own words. Everything
+// below only reads/writes `CustomWord` data — never the built-in
+// `vocabulary` array — so the two collections can't leak into each other.
+const EMPTY_DRAFT: CustomWordDraft = { expression: '', reading: '', meaning: '', level: 'N5' };
+
+function WordForm({ initial, submitLabel, testIdPrefix, onSubmit, onCancel }: {
+  initial: CustomWordDraft;
+  submitLabel: string;
+  testIdPrefix: string;
+  onSubmit: (draft: CustomWordDraft) => void;
+  onCancel?: () => void;
+}) {
+  const [expression, setExpression] = useState(initial.expression);
+  const [reading, setReading] = useState(initial.reading);
+  const [meaning, setMeaning] = useState(initial.meaning);
+  const [level, setLevel] = useState<Level>(initial.level);
+  const [error, setError] = useState<string | null>(null);
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!expression.trim() || !meaning.trim()) {
+      setError('Expression and meaning are required.');
+      return;
+    }
+    onSubmit({ expression, reading, meaning, level });
+    if (!onCancel) { setExpression(''); setReading(''); setMeaning(''); setLevel('N5'); }
+  };
+  return <form onSubmit={handleSubmit} className="space-y-4" data-testid={`${testIdPrefix}-form`}>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="block text-xs font-bold text-muted-foreground">
+        <span className="mb-1.5 block">Japanese <span className="text-[hsl(var(--accent))]">*</span></span>
+        <input value={expression} onChange={(event) => { setExpression(event.target.value); setError(null); }} placeholder="e.g. ありがとう" className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid={`${testIdPrefix}-expression`} />
+      </label>
+      <label className="block text-xs font-bold text-muted-foreground">
+        <span className="mb-1.5 block">Reading (romaji)</span>
+        <input value={reading} onChange={(event) => { setReading(event.target.value); setError(null); }} placeholder="e.g. arigatou" className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid={`${testIdPrefix}-reading`} />
+      </label>
+    </div>
+    <label className="block text-xs font-bold text-muted-foreground">
+      <span className="mb-1.5 block">Meaning <span className="text-[hsl(var(--accent))]">*</span></span>
+      <input value={meaning} onChange={(event) => { setMeaning(event.target.value); setError(null); }} placeholder="e.g. thank you" className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid={`${testIdPrefix}-meaning`} />
+    </label>
+    <div>
+      <span className="mb-1.5 block text-xs font-bold text-muted-foreground">Level</span>
+      <div className="grid grid-cols-5 gap-2">
+        {CUSTOM_LEVELS.map((option) => <button key={option} type="button" onClick={() => { setLevel(option); setError(null); }} className={cx('rounded-xl border py-2.5 text-xs font-bold transition-colors', level === option ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border bg-background text-muted-foreground hover:bg-muted')} data-testid={`${testIdPrefix}-level-${option}`}>{option}</button>)}
+      </div>
+    </div>
+    {error && <p className="rounded-lg bg-[hsl(var(--destructive)/.1)] px-3 py-2 text-xs font-semibold text-[hsl(var(--destructive))]" data-testid={`${testIdPrefix}-error`}>{error}</p>}
+    <div className="flex gap-2">
+      <button type="submit" className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5" data-testid={`${testIdPrefix}-submit`}>{onCancel ? <Check size={15} /> : <Plus size={15} />} {submitLabel}</button>
+      {onCancel && <button type="button" onClick={onCancel} className="rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-muted-foreground hover:bg-muted" data-testid={`${testIdPrefix}-cancel`}>Cancel</button>}
+    </div>
+  </form>;
+}
+
+function CustomWordRow({ word, isEditing, onEdit, onCancelEdit, onSave, onDelete }: {
+  word: CustomWord;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: (draft: CustomWordDraft) => void;
+  onDelete: () => void;
+}) {
+  if (isEditing) {
+    return <div className="rounded-2xl border border-[hsl(var(--secondary))] bg-card p-4" data-testid={`custom-word-edit-${word.id}`}>
+      <p className="mono-label mb-4 text-[hsl(var(--secondary))]">Editing entry</p>
+      <WordForm initial={word} submitLabel="Save changes" testIdPrefix={`edit-${word.id}`} onSubmit={onSave} onCancel={onCancelEdit} />
+    </div>;
+  }
+  return <article className="group flex items-center gap-4 rounded-2xl border border-border bg-card p-4 transition-transform hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]" data-testid={`custom-word-${word.id}`}>
+    <div className="grid size-12 shrink-0 place-items-center rounded-xl" style={{ backgroundColor: `${levelColor[word.level]}1f` }}>
+      <span className="kanji-display text-xl">{word.expression}</span>
+    </div>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-2"><p className="truncate font-semibold">{word.reading || word.expression}</p><LevelPill level={word.level} /></div>
+      <p className="truncate text-sm text-muted-foreground">{word.meaning}</p>
+    </div>
+    <div className="flex shrink-0 items-center gap-1">
+      <button onClick={onEdit} aria-label={`Edit ${word.expression}`} className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" data-testid={`button-edit-custom-${word.id}`}><Pencil size={15} /></button>
+      <button onClick={onDelete} aria-label={`Delete ${word.expression}`} className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-[hsl(var(--destructive)/.12)] hover:text-[hsl(var(--destructive))]" data-testid={`button-delete-custom-${word.id}`}><Trash2 size={15} /></button>
+    </div>
+  </article>;
+}
+
+function CustomWords() {
+  const { words, add, update, remove } = useCustomWords();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return words;
+    return words.filter((word) => `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(q));
+  }, [words, query]);
+  const handleSave = (id: string, draft: CustomWordDraft) => { update(id, draft); setEditingId(null); };
+  const handleDelete = (word: CustomWord) => {
+    if (window.confirm(`Delete "${word.expression}" from your drawer? This cannot be undone.`)) remove(word.id);
+  };
+  return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12" data-testid="page-custom-words">
+    <section className="relative overflow-hidden rounded-[1.75rem] bg-[hsl(var(--secondary))] px-6 py-8 text-[hsl(var(--secondary-foreground))] md:px-10 md:py-11">
+      <div className="absolute -right-16 -top-24 size-72 rounded-full border-[28px] border-[hsl(var(--accent)/.9)] opacity-80" /><div className="absolute -bottom-16 right-24 size-36 rounded-full border-[18px] border-[hsl(var(--accent)/.4)]" />
+      <div className="relative max-w-2xl">
+        <p className="mono-label mb-5 text-[hsl(var(--secondary-foreground)/.55)]">Personal drawer / 002</p>
+        <h1 className="font-serif text-5xl leading-[.96] tracking-[-.06em] md:text-7xl">A drawer of<br /><em className="text-[hsl(var(--accent))]">your own.</em></h1>
+        <p className="mt-6 max-w-md text-sm leading-6 text-[hsl(var(--secondary-foreground)/.68)]">Words you add live here — kept apart from the cabinet's original collection. Add a word, fix it when it changes, or clear it out any time.</p>
+      </div>
+      <span className="absolute bottom-6 right-8 hidden font-mono text-[10px] tracking-[.15em] text-[hsl(var(--secondary-foreground)/.38)] md:block">追加 / YOURS</span>
+    </section>
+    <div className="mt-8 grid gap-6 lg:grid-cols-[.85fr_1.15fr] lg:items-start">
+      <section className="soft-shadow rounded-[1.75rem] border border-border bg-card p-6 md:p-8" data-testid="custom-add-card">
+        <p className="mono-label mb-2 text-muted-foreground">Add an entry</p>
+        <h2 className="font-serif text-3xl">A new word.</h2>
+        <div className="mt-6"><WordForm initial={EMPTY_DRAFT} submitLabel="Add to drawer" testIdPrefix="add" onSubmit={add} /></div>
+        <p className="mt-5 text-xs leading-5 text-muted-foreground">Stored in its own place, separate from the cabinet's built-in {vocabulary.length.toLocaleString()} words — the two never mix.</p>
+      </section>
+      <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8" data-testid="custom-list-card">
+        <div className="mb-5">
+          <p className="mono-label mb-2 text-muted-foreground">In the drawer</p>
+          <h2 className="font-serif text-3xl">{words.length === 0 ? 'Still empty.' : words.length === 1 ? 'One word, so far.' : `${words.length} words inside`}</h2>
+        </div>
+        <label className="relative mb-4 block"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your additions…" className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-custom-search" /></label>
+        {words.length === 0 ? <div className="rounded-2xl border border-dashed border-border px-6 py-14 text-center" data-testid="custom-empty-state"><BookPlus className="mx-auto text-muted-foreground" size={26} /><h3 className="mt-4 font-serif text-2xl">This drawer is empty.</h3><p className="mt-2 text-sm text-muted-foreground">Add your first word with the form and it will keep a seat here.</p></div> : filtered.length === 0 ? <div className="rounded-2xl border border-dashed border-border px-6 py-10 text-center"><p className="font-serif text-xl">No matches in the drawer.</p><button onClick={() => setQuery('')} className="mt-2 text-xs font-bold text-[hsl(var(--secondary))] underline-offset-2 hover:underline" data-testid="button-custom-clear-search">Clear search</button></div> : <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">{filtered.map((word) => <CustomWordRow key={word.id} word={word} isEditing={editingId === word.id} onEdit={() => setEditingId(word.id)} onCancelEdit={() => setEditingId(null)} onSave={(draft) => handleSave(word.id, draft)} onDelete={() => handleDelete(word)} />)}</div>}
+      </section>
+    </div>
+  </div>;
 }
 
 function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists> }) {
@@ -460,7 +603,7 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Shell><Switch><Route path="/" component={Cabinet} /><Route path="/quiz" component={Quiz} /><Route path="/results" component={Results} /><Route component={NotFound} /></Switch></Shell></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Shell><Switch><Route path="/" component={Cabinet} /><Route path="/quiz" component={Quiz} /><Route path="/custom" component={CustomWords} /><Route path="/results" component={Results} /><Route component={NotFound} /></Switch></Shell></RoutedErrorBoundary>;
 }
 
 function App() {
