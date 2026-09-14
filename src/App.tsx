@@ -521,8 +521,13 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const word = cards[index];
   // Distractors keep distracting from the whole built-in cabinet exactly as
   // before; when "My words" is part of the round, your words join in as
-  // possible decoys too.
-  const distractorSource = myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary;
+  // possible decoys too. MUST be memoized: a fresh array on every render
+  // would re-shuffle the options on each render — and the quiz timer
+  // re-renders every second, which made the options "keep moving".
+  const distractorSource = useMemo(
+    () => (myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary),
+    [myWords],
+  );
   const choices = useMemo(
     () => word ? shuffle([word, ...shuffle(distractorSource.filter((item) => item.id !== word.id)).slice(0, 3)]) : [],
     [word, distractorSource],
