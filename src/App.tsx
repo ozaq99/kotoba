@@ -324,18 +324,24 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     setResults((current) => [...current, { word, choice: '(no answer)', correct: false }]);
   };
 
+  const lastTimedIndexRef = useRef(-1);
   useEffect(() => {
     if (timerMode !== 'question') return;
-    setTimeLeft(cardSeconds);
-  }, [index, timerMode, cardSeconds]);
-
-  useEffect(() => {
-    if (timerMode !== 'question') return;
+    if (lastTimedIndexRef.current !== index) {
+      // Just arrived on this card — reset the clock and stop here. Do NOT
+      // fall through to the timeout check below in this same pass, since
+      // `timeLeft` here is still whatever was left on the PREVIOUS card
+      // (often 0, right after a timeout). Checking it now would fire a
+      // false timeout on the new card before the reset even takes effect.
+      lastTimedIndexRef.current = index;
+      setTimeLeft(cardSeconds);
+      return;
+    }
     if (selected) return;
     if (timeLeft <= 0) { timeout(); return; }
     const id = setTimeout(() => setTimeLeft((value) => value - 1), 1000);
     return () => clearTimeout(id);
-  }, [timeLeft, selected, timerMode]);
+  }, [index, timeLeft, selected, timerMode, cardSeconds]);
 
   useEffect(() => {
     if (timerMode !== 'session') return;
