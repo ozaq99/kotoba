@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, Link } from 'wouter';
-import { supabase } from '@/utils/supabase/client';
+import { auth } from '@/utils/firebase/client';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -13,10 +14,13 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      setLocation('/');
+    } catch (err: any) {
+      setError(err.message);
+    }
     setLoading(false);
-    if (error) setError(error.message);
-    else setLocation('/');
   };
 
   return (
