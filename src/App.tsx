@@ -2,6 +2,8 @@ import Login from '@/auth/Login';
 import ForgotPassword from '@/auth/ForgotPassword';
 import { useAuth } from '@/auth/useAuth';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db } from '@/utils/firebase/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
@@ -97,10 +99,37 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
 const MAX_SAVE_SLOTS = 10;
 
 function useWordLists() {
+  const { user } = useAuth();
   const [lists, setLists] = useState<WordList[]>(() => loadWordLists());
   const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
-  useEffect(() => { persistWordLists(lists); }, [lists]);
-  useEffect(() => { if (activeId) persistActiveListId(activeId); }, [activeId]);
+
+  useEffect(() => {
+    persistWordLists(lists);
+    if (user) setDoc(doc(db, 'wordLists', user.uid), { lists, activeId }, { merge: true });
+  }, [lists, user]);
+  useEffect(() => {
+    if (activeId) {
+      persistActiveListId(activeId);
+      if (user) setDoc(doc(db, 'wordLists', user.uid), { lists, activeId }, { merge: true });
+    }
+  }, [activeId, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const ref = doc(db, 'wordLists', user.uid);
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as { lists: WordList[]; activeId: string };
+        setLists(data.lists);
+        setActiveId(data.activeId);
+      } else {
+        setDoc(ref, { lists, activeId });
+      }
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
 
   const slotLimitReached = lists.length >= MAX_SAVE_SLOTS;
@@ -125,8 +154,25 @@ function useWordLists() {
 // Persisted under its own localStorage key (see src/lib/customWords.ts), so
 // these entries never mix into the original CSV-backed `vocabulary`.
 function useCustomWords() {
+  const { user } = useAuth();
   const [words, setWords] = useState<CustomWord[]>(() => loadCustomWords());
-  useEffect(() => { persistCustomWords(words); }, [words]);
+
+  useEffect(() => {
+    persistCustomWords(words);
+    if (user) setDoc(doc(db, 'customWords', user.uid), { words });
+  }, [words, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const ref = doc(db, 'customWords', user.uid);
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      if (snap.exists()) setWords((snap.data().words as CustomWord[]) ?? []);
+      else setDoc(ref, { words });
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   const add = (draft: CustomWordDraft) => setWords((current) => addCustomWord(current, draft).words);
   const update = (id: string, draft: CustomWordDraft) => setWords((current) => updateCustomWord(current, id, draft));
   const remove = (id: string) => setWords((current) => deleteCustomWord(current, id));
