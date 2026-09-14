@@ -5,7 +5,7 @@
 // stay separate on purpose: the Cabinet browses the built-in words, while
 // the /custom page manages only the entries stored below.
 
-import { type Level } from './vocabulary';
+import { type Level, type Word } from './vocabulary';
 
 export type CustomWord = {
   id: string;
@@ -84,4 +84,11 @@ export function updateCustomWord(words: CustomWord[], id: string, draft: CustomW
 
 export function deleteCustomWord(words: CustomWord[], id: string): CustomWord[] {
   return words.filter((word) => word.id !== id);
+}
+
+// Quiz decks deal in the plain `Word` shape, so custom words join the pool
+// through this adapter. The built-in `vocabulary` array itself is never
+// touched — the mix is only assembled inside the quiz component.
+export function customWordsToWords(words: CustomWord[]): Word[] {
+  return words.map((word) => ({ id: word.id, expression: word.expression, reading: word.reading, meaning: word.meaning, level: word.level, tags: [] }));
 }
