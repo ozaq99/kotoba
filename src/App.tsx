@@ -1,3 +1,5 @@
+import Login from '@/auth/Login';
+import Signup from '@/auth/Signup';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
@@ -715,7 +717,8 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Shell><Switch><Route path="/" component={Cabinet} /><Route path="/quiz" component={Quiz} /><Route path="/custom" component={CustomWords} /><Route path="/results" component={Results} /><Route component={NotFound} /></Switch></Shell></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Shell><Switch><Route path="/" component={Cabinet} /><Route path="/quiz" component={Quiz} /><Route path="/custom" component={CustomWords} /><Route path="/results" component={Results} /><Route path="/login" component={Login} />
+<Route path="/signup" component={Signup} /><Route component={NotFound} /></Switch></Shell></RoutedErrorBoundary>;
 }
 
 function App() {
