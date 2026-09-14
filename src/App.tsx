@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
 import {
   ArrowRight, BookOpen, BookPlus, Check, ChevronDown, CircleHelp, Clock3, Filter,
-  Flame, FolderOpen, Headphones, Heart, Home, Keyboard, Layers3, Menu,
+  Flame, FolderOpen, Headphones, Heart, Home, Keyboard, Layers3, LogOut, Menu,
   Pencil, Play, Plus, RotateCcw, Search, Sparkles, Star, Target, Trash2,
   Trophy, Volume2, X, Zap,
 } from 'lucide-react';
@@ -147,6 +147,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const { user, logout } = useAuth();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   useEffect(() => { const onFocus = () => setHistory(loadHistory()); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, []);
   const { current: currentStreak } = useMemo(() => computeStreaks(history), [history]);
   const last7Days = useMemo(() => { const days = new Set(history.map((item) => item.date)); const cursor = new Date(); const result: boolean[] = []; for (let i = 0; i < 7; i += 1) { result.unshift(days.has(toDateKey(cursor))); cursor.setDate(cursor.getDate() - 1); } return result; }, [history]);
@@ -179,16 +181,41 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex items-center gap-3">
         <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-[hsl(var(--secondary))]" /> offline-ready</div>
         {user && (
-          <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-muted-foreground sm:inline">{user.email}</span>
+          <div className="relative">
             <button
-              onClick={async () => { await logout(); setLocation('/login'); }}
-              className="grid size-9 place-items-center rounded-full bg-[hsl(var(--primary))] text-sm font-bold text-[hsl(var(--primary-foreground))]"
-              title="Log out"
-              data-testid="button-logout"
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              className="flex items-center gap-2 rounded-full border border-border bg-card py-1.5 pl-1.5 pr-3 text-sm hover:bg-muted"
+              data-testid="button-user-menu"
             >
-              {user.email?.[0].toUpperCase()}
+              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[hsl(var(--primary))] text-xs font-bold text-[hsl(var(--primary-foreground))]">
+                {user.email?.[0].toUpperCase()}
+              </span>
+              <span className="hidden max-w-[140px] truncate text-xs font-semibold text-muted-foreground sm:inline">{user.email}</span>
+              <ChevronDown size={14} className={cx('text-muted-foreground transition-transform', userMenuOpen && 'rotate-180')} />
             </button>
+            {userMenuOpen && <>
+              <div className="fixed inset-0 z-30" onClick={() => setUserMenuOpen(false)} />
+              <div className="absolute right-0 top-[calc(100%+8px)] z-40 w-60 rounded-xl border border-border bg-card p-2 shadow-[var(--shadow-md)]" data-testid="menu-user">
+                <div className="px-2 py-2">
+                  <p className="text-xs text-muted-foreground">Signed in as</p>
+                  <p className="truncate text-sm font-semibold">{user.email}</p>
+                </div>
+                <div className="my-1 h-px bg-border" />
+                <button
+                  onClick={async () => {
+                    setLoggingOut(true);
+                    await logout();
+                    setUserMenuOpen(false);
+                    setLocation('/login');
+                  }}
+                  disabled={loggingOut}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-semibold text-[hsl(var(--destructive))] transition-colors hover:bg-[hsl(var(--destructive)/.1)] disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="button-logout"
+                >
+                  <LogOut size={15} /> {loggingOut ? 'Logging out…' : 'Log out'}
+                </button>
+              </div>
+            </>}
           </div>
         )}
       </div>
