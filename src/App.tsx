@@ -3,14 +3,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
 import {
   ArrowRight, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Filter,
-  Flame, Headphones, Heart, Home, Keyboard, Layers3, Menu, Play, RotateCcw,
-  Search, Sparkles, Star, Target, Trophy, Volume2, X, Zap,
+  Flame, FolderOpen, Headphones, Heart, Home, Keyboard, Layers3, Menu,
+  Pencil, Play, Plus, RotateCcw, Search, Sparkles, Star, Target, Trash2,
+  Trophy, Volume2, X, Zap,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { feedbackAudio, playFeedback, shuffle, vocabulary, type Level, type Word } from '@/lib/vocabulary';
+import {
+  createWordList, deleteWordList, loadActiveListId, loadWordLists, persistActiveListId,
+  persistWordLists, renameWordList, toggleWordInList, type WordList,
+} from '@/lib/wordLists';
 
 const queryClient = new QueryClient();
 const levels: Array<Level | 'ALL'> = ['ALL', 'N5', 'N4', 'N3', 'N2', 'N1'];
@@ -44,6 +49,29 @@ function computeStreaks(history: HistoryEntry[]) {
 }
 
 function cx(...classes: Array<string | false | null | undefined>) { return classes.filter(Boolean).join(' '); }
+
+// Save slots: multiple renamable word lists, one of which is "active" (what
+// the heart button on a word card saves into). Reads/writes localStorage
+// directly, mirroring how history/favorites already worked in this file.
+function useWordLists() {
+  const [lists, setLists] = useState<WordList[]>(() => loadWordLists());
+  const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
+  useEffect(() => { persistWordLists(lists); }, [lists]);
+  useEffect(() => { if (activeId) persistActiveListId(activeId); }, [activeId]);
+  const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
+  const createList = (name: string) => {
+    const { lists: next, id } = createWordList(lists, name);
+    setLists(next); setActiveId(id); return id;
+  };
+  const renameList = (id: string, name: string) => setLists((current) => renameWordList(current, id, name));
+  const deleteList = (id: string) => setLists((current) => {
+    const next = deleteWordList(current, id);
+    if (activeId === id) setActiveId(next[0].id);
+    return next;
+  });
+  const toggleWord = (wordId: string, listId: string = activeId) => setLists((current) => toggleWordInList(current, listId, wordId));
+  return { lists, activeList, activeId, setActiveId, createList, renameList, deleteList, toggleWord };
+}
 
 function Logo() {
   return <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
@@ -117,11 +145,55 @@ function WordCard({ word, favorite, onFavorite }: { word: Word; favorite: boolea
   </article>;
 }
 
+function SaveSlotBar({ wordLists }: { wordLists: ReturnType<typeof useWordLists> }) {
+  const { lists, activeList, activeId, setActiveId, createList, renameList, deleteList } = wordLists;
+  const [open, setOpen] = useState(false);
+  if (!activeList) return null;
+  const handleCreate = () => {
+    const name = window.prompt('Name your new save slot:', `Save ${lists.length + 1}`);
+    if (name && name.trim()) createList(name);
+  };
+  const handleRename = (list: WordList) => {
+    const name = window.prompt('Rename this save slot:', list.name);
+    if (name && name.trim()) renameList(list.id, name);
+  };
+  const handleDelete = (list: WordList) => {
+    if (lists.length <= 1) return;
+    if (window.confirm(`Delete "${list.name}" and its ${list.wordIds.length} saved word${list.wordIds.length === 1 ? '' : 's'}? This cannot be undone.`)) deleteList(list.id);
+  };
+  return <div className="relative">
+    <button onClick={() => setOpen(!open)} className="flex h-11 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-semibold hover:bg-muted" data-testid="button-save-slot-menu">
+      <FolderOpen size={16} className="text-[hsl(var(--accent))]" />
+      <span className="max-w-[9rem] truncate">{activeList.name}</span>
+      <span className="mono-label text-muted-foreground">{activeList.wordIds.length}</span>
+      <ChevronDown size={14} className={cx('text-muted-foreground transition-transform', open && 'rotate-180')} />
+    </button>
+    {open && <>
+      <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+      <div className="absolute left-0 top-[calc(100%+6px)] z-40 w-72 rounded-xl border border-border bg-card p-2 shadow-[var(--shadow-md)]" data-testid="menu-save-slots">
+        <p className="mono-label px-2 pb-2 pt-1 text-muted-foreground">Save slots</p>
+        <div className="max-h-64 space-y-1 overflow-y-auto">
+          {lists.map((list) => <div key={list.id} className={cx('group flex items-center gap-1 rounded-lg px-2 py-2', list.id === activeId ? 'bg-[hsl(var(--secondary)/.13)]' : 'hover:bg-muted')}>
+            <button onClick={() => { setActiveId(list.id); setOpen(false); }} className="flex flex-1 items-center justify-between gap-2 text-left" data-testid={`button-select-slot-${list.id}`}>
+              <span className={cx('truncate text-sm', list.id === activeId ? 'font-bold text-[hsl(var(--secondary))]' : 'font-medium')}>{list.name}</span>
+              <span className="mono-label shrink-0 text-muted-foreground">{list.wordIds.length}</span>
+            </button>
+            <button onClick={() => handleRename(list)} aria-label={`Rename ${list.name}`} className="rounded-md p-1.5 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100" data-testid={`button-rename-slot-${list.id}`}><Pencil size={13} /></button>
+            {lists.length > 1 && <button onClick={() => handleDelete(list)} aria-label={`Delete ${list.name}`} className="rounded-md p-1.5 text-muted-foreground opacity-0 hover:bg-[hsl(var(--destructive)/.14)] hover:text-[hsl(var(--destructive))] group-hover:opacity-100" data-testid={`button-delete-slot-${list.id}`}><Trash2 size={13} /></button>}
+          </div>)}
+        </div>
+        <button onClick={handleCreate} className="mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed border-border px-2 py-2 text-sm font-semibold text-muted-foreground hover:border-[hsl(var(--secondary))] hover:text-[hsl(var(--secondary))]" data-testid="button-create-slot"><Plus size={15} /> New save slot</button>
+      </div>
+    </>}
+  </div>;
+}
+
 function Cabinet() {
   const [query, setQuery] = useState('');
   const [level, setLevel] = useState<Level | 'ALL' | 'FAVORITES'>('ALL');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
+  const wordLists = useWordLists();
+  const { activeList, toggleWord } = wordLists;
   const [visible, setVisible] = useState(24);
   const [ready, setReady] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
@@ -130,11 +202,11 @@ function Cabinet() {
   const lastEntry = history[history.length - 1];
   const lastScorePct = lastEntry ? Math.round((lastEntry.score / lastEntry.total) * 100) : null;
   const resetProgress = () => { if (!window.confirm('Reset your streak and score history? This cannot be undone.')) return; localStorage.removeItem(HISTORY_KEY); setHistory([]); };
+  const activeWordIds = activeList?.wordIds ?? [];
   const filtered = useMemo(() => vocabulary.filter((word) => {
     const matchesText = `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(query.toLowerCase());
-    return matchesText && (level === 'ALL' || word.level === level) && (!favoritesOnly || favorites.includes(word.id));
-  }), [query, level, favoritesOnly, favorites]);
-  const toggleFavorite = (id: string) => setFavorites((current) => { const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id]; localStorage.setItem('kotoba-favorites', JSON.stringify(next)); return next; });
+    return matchesText && (level === 'ALL' || word.level === level) && (!favoritesOnly || activeWordIds.includes(word.id));
+  }), [query, level, favoritesOnly, activeWordIds]);
   return <div className="mx-auto max-w-[1400px] px-5 py-8 pb-28 md:px-10 md:py-12 md:pb-12">
     <section className="relative overflow-hidden rounded-[1.75rem] bg-[hsl(var(--primary))] px-6 py-8 text-[hsl(var(--primary-foreground))] md:px-10 md:py-11">
       <div className="absolute -right-16 -top-24 size-72 rounded-full border-[28px] border-[hsl(var(--accent)/.9)] opacity-80" /><div className="absolute -bottom-16 right-24 size-36 rounded-full border-[18px] border-[hsl(var(--secondary)/.55)]" />
@@ -144,17 +216,18 @@ function Cabinet() {
     </section>
     <section className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4" data-testid="cabinet-stats">
       <StatCard icon={Layers3} label="In the cabinet" value={vocabulary.length.toLocaleString()} note="across five levels" color="hsl(194 71% 42%)" />
-      <StatCard icon={Heart} label="Kept close" value={favorites.length.toString().padStart(2, '0')} note="your saved words" color="hsl(11 77% 61%)" />
+      <StatCard icon={Heart} label="Kept close" value={activeWordIds.length.toString().padStart(2, '0')} note={activeList ? `in "${activeList.name}"` : 'your saved words'} color="hsl(11 77% 61%)" />
       <StatCard icon={Flame} label="Current run" value={`${currentRun} day${currentRun === 1 ? '' : 's'}`} note={bestRun > 0 ? `best: ${bestRun} day${bestRun === 1 ? '' : 's'}` : 'finish a round to start'} color="hsl(38 68% 59%)" />
       <StatCard icon={Target} label="Last score" value={lastScorePct !== null ? `${lastScorePct}%` : '—'} note={lastEntry ? `on ${lastEntry.date}` : 'no quizzes yet'} color="hsl(69 73% 45%)" />
     </section>
     {history.length > 0 && <div className="mt-3 flex justify-end"><button onClick={resetProgress} className="text-xs font-semibold text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="button-reset-progress">Reset streak &amp; score history</button></div>}
     <section className="mt-12"><SectionTitle eyebrow="The cabinet" title="Browse your words" action={<span className="hidden text-xs text-muted-foreground sm:block">{filtered.length.toLocaleString()} entries found</span>} />
+      <div className="mb-3 flex flex-wrap items-center gap-2"><span className="mono-label text-muted-foreground">Saving into</span><SaveSlotBar wordLists={wordLists} /></div>
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
         <label className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} /><input value={query} onChange={(event) => { setQuery(event.target.value); setVisible(24); }} placeholder="Search kanji, reading, or meaning…" className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-search" /></label>
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar"><button onClick={() => { setFavoritesOnly(!favoritesOnly); setVisible(24); }} className={cx('flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-semibold', favoritesOnly ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card')} data-testid="button-favorites-filter"><Heart size={15} fill={favoritesOnly ? 'currentColor' : 'none'} /> Saved</button><span className="h-11 w-px bg-border" />{levels.map((item) => <button key={item} onClick={() => { setLevel(item); setVisible(24); }} className={cx('h-11 shrink-0 rounded-xl border px-3 text-xs font-bold', level === item ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'border-border bg-card text-muted-foreground')} data-testid={`filter-${item}`}>{item === 'ALL' ? 'All levels' : item}</button>)}</div>
       </div>
-      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}><WordCard word={word} favorite={favorites.includes(word.id)} onFavorite={() => toggleFavorite(word.id)} /></div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
+      {!ready ? <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{[1, 2, 3, 4, 5, 6, 7, 8].map((item) => <div key={item} className="h-64 animate-pulse rounded-2xl bg-muted" />)}</div> : filtered.length === 0 ? <div className="ruled rounded-2xl border border-dashed border-border px-6 py-20 text-center"><CircleHelp className="mx-auto text-muted-foreground" size={27} /><h3 className="mt-4 font-serif text-2xl">Nothing in this drawer.</h3><p className="mt-2 text-sm text-muted-foreground">Try another search or put a few saved words back in view.</p><button onClick={() => { setQuery(''); setLevel('ALL'); setFavoritesOnly(false); }} className="mt-5 rounded-lg bg-[hsl(var(--primary))] px-4 py-2 text-sm font-semibold text-[hsl(var(--primary-foreground))]" data-testid="button-clear-filters">Clear filters</button></div> : <><div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4">{filtered.slice(0, visible).map((word, index) => <div key={word.id} className="animate-rise" style={{ animationDelay: `${Math.min(index, 7) * 45}ms` }}><WordCard word={word} favorite={activeWordIds.includes(word.id)} onFavorite={() => toggleWord(word.id)} /></div>)}</div>{visible < filtered.length && <button onClick={() => setVisible((count) => count + 24)} className="mx-auto mt-8 flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-3 text-sm font-bold hover:bg-muted" data-testid="button-load-more">Load more words <ChevronDown size={16} /></button>}</>}
     </section>
   </div>;
 }
@@ -168,10 +241,13 @@ function QuizSetup() {
   const [timerMode, setTimerMode] = useState<'question' | 'session'>('question');
   const [cardSecondsInput, setCardSecondsInput] = useState('15');
   const [sessionMinutesInput, setSessionMinutesInput] = useState('3');
-  const [favorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
+  const [lists] = useState<WordList[]>(() => loadWordLists());
+  const [savedListId, setSavedListId] = useState<string>(() => loadActiveListId(loadWordLists()));
+  const savedList = lists.find((item) => item.id === savedListId);
   const cardSeconds = Math.min(Math.max(Math.round(Number(cardSecondsInput)) || 15, 3), 120);
   const sessionMinutes = Math.min(Math.max(Math.round(Number(sessionMinutesInput)) || 3, 1), 180);
-  const available = level === 'ALL' ? vocabulary.length : level === 'FAVORITES' ? favorites.length : vocabulary.filter((word) => word.level === level).length;
+  const totalSaved = lists.reduce((sum, item) => sum + item.wordIds.length, 0);
+  const available = level === 'ALL' ? vocabulary.length : level === 'FAVORITES' ? (savedList?.wordIds.length ?? 0) : vocabulary.filter((word) => word.level === level).length;
   useEffect(() => { setCount((current) => Math.min(current, Math.max(available, 1))); }, [available]);
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:px-10 md:py-14 md:pb-12">
     <div className="grid gap-8 lg:grid-cols-[1.1fr_.9fr] lg:items-start">
@@ -180,13 +256,15 @@ function QuizSetup() {
         <p className="mono-label mb-2 text-muted-foreground">Set the table</p><h2 className="font-serif text-3xl">Round settings</h2>
         <div className="mt-8 space-y-7">
            <div><label className="mb-3 block text-sm font-bold">How many cards?</label><div className="grid grid-cols-4 gap-2">{[5, 10, 20, 30].map((option) => <button key={option} onClick={() => { setCount(Math.min(option, available)); setCustomCount(''); }} className={cx(!customCount && count === option ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted', 'rounded-xl border py-3 text-sm font-bold')} data-testid={`quiz-count-${option}`}>{option}</button>)}</div><div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-custom-count" className="text-xs font-semibold text-muted-foreground">Custom</label><input id="quiz-custom-count" type="number" min="1" max={available} value={customCount} onChange={(event) => { const raw = event.target.value; setCustomCount(raw); const next = Number(raw); if (raw && Number.isFinite(next)) setCount(Math.min(Math.max(next, 1), available)); }} placeholder={`1–${available}`} className="h-10 w-28 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-custom-count" /><span className="text-xs text-muted-foreground">cards, up to {available.toLocaleString()}</span></div></div>
-           <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button><button onClick={() => favorites.length > 0 && setLevel('FAVORITES')} disabled={favorites.length === 0} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', level === 'FAVORITES' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-favorites"><Heart size={14} fill={level === 'FAVORITES' ? 'currentColor' : 'none'} /> Saved</button></div><p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available{level === 'FAVORITES' && available === 0 ? ' — save some words in the Cabinet first' : ''}</p></div>
+           <div><label className="mb-3 block text-sm font-bold">Open a drawer</label><div className="grid grid-cols-3 gap-2">{levels.slice(1).map((option) => <button key={option} onClick={() => setLevel(option)} className={cx('rounded-xl border py-3 text-sm font-bold', level === option ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`quiz-level-${option}`}>{option}</button>)}<button onClick={() => setLevel('ALL')} className={cx('rounded-xl border py-3 text-sm font-bold', level === 'ALL' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-all">Mixed</button><button onClick={() => totalSaved > 0 && setLevel('FAVORITES')} disabled={totalSaved === 0} className={cx('flex items-center justify-center gap-1.5 rounded-xl border py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40', level === 'FAVORITES' ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid="quiz-level-favorites"><Heart size={14} fill={level === 'FAVORITES' ? 'currentColor' : 'none'} /> Saved</button></div>
+             {level === 'FAVORITES' && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-muted p-2"><span className="mono-label px-1 text-muted-foreground">Which save slot?</span><div className="flex flex-1 flex-wrap gap-1.5">{lists.map((item) => <button key={item.id} onClick={() => setSavedListId(item.id)} className={cx('rounded-lg border px-2.5 py-1.5 text-xs font-bold', savedListId === item.id ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.16)]' : 'border-border bg-card text-muted-foreground hover:bg-muted')} data-testid={`quiz-saved-list-${item.id}`}>{item.name} <span className="opacity-60">({item.wordIds.length})</span></button>)}</div></div>}
+             <p className="mt-2 text-xs text-muted-foreground">{available.toLocaleString()} cards available{level === 'FAVORITES' && available === 0 ? ' — save some words to this slot in the Cabinet first' : ''}</p></div>
            <div><label className="mb-3 block text-sm font-bold">Quiz type</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setDirection('meaning')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'meaning' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-meaning"><BookOpen size={15} /> Choose meaning</button><button onClick={() => setDirection('word')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', direction === 'word' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-direction-word"><Keyboard size={15} /> Choose Japanese</button></div><p className="mt-2 text-xs text-muted-foreground">Japanese choices include kanji and furigana.</p></div>
            <div><label className="mb-3 block text-sm font-bold">Timer</label><div className="grid grid-cols-2 gap-2"><button onClick={() => setTimerMode('question')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'question' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-question"><Clock3 size={15} /> Per question</button><button onClick={() => setTimerMode('session')} className={cx('flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold', timerMode === 'session' ? 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.12)] text-[hsl(var(--secondary))]' : 'border-border hover:bg-muted')} data-testid="quiz-timer-session"><Clock3 size={15} /> Whole session</button></div>
              {timerMode === 'question' ? <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-card-seconds" className="text-xs font-semibold text-muted-foreground">Seconds per card</label><input id="quiz-card-seconds" type="number" min="3" max="120" value={cardSecondsInput} onChange={(event) => setCardSecondsInput(event.target.value)} onBlur={() => setCardSecondsInput(String(cardSeconds))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-card-seconds" /><span className="text-xs text-muted-foreground">seconds (3–120)</span></div> : <div className="mt-3 flex items-center gap-3"><label htmlFor="quiz-session-minutes" className="text-xs font-semibold text-muted-foreground">Minutes for the round</label><input id="quiz-session-minutes" type="number" min="1" max="180" value={sessionMinutesInput} onChange={(event) => setSessionMinutesInput(event.target.value)} onBlur={() => setSessionMinutesInput(String(sessionMinutes))} className="h-10 w-24 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-quiz-session-minutes" /><span className="text-xs text-muted-foreground">minutes (1–180)</span></div>}
              <p className="mt-2 text-xs text-muted-foreground">{timerMode === 'question' ? `Each card gives you ${cardSeconds} second${cardSeconds === 1 ? '' : 's'} to answer.` : `The whole round ends after ${sessionMinutes} minute${sessionMinutes === 1 ? '' : 's'}, however many cards you get to.`}</p></div>
         </div>
-        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
+        <button onClick={() => setLocation(`/quiz?run=1&count=${count}&level=${level}&direction=${direction}&timerMode=${timerMode}&cardSeconds=${cardSeconds}&sessionSeconds=${sessionMinutes * 60}${level === 'FAVORITES' ? `&listId=${savedListId}` : ''}`)} disabled={available === 0} className="mt-9 flex w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--primary))] py-3.5 text-sm font-bold text-[hsl(var(--primary-foreground))] transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0" data-testid="button-start-quiz"><Play size={16} fill="currentColor" /> Start {count}-card round <ArrowRight size={16} /></button>
       </section>
     </div>
   </div>;
@@ -200,9 +278,13 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const timerMode = params.get('timerMode') === 'session' ? 'session' : 'question';
   const cardSeconds = Number(params.get('cardSeconds')) || 15;
   const sessionSeconds = Number(params.get('sessionSeconds')) || 180;
-  const [favorites] = useState<string[]>(() => JSON.parse(localStorage.getItem('kotoba-favorites') || '[]'));
+  const listId = params.get('listId');
+  const [savedWordIds] = useState<string[]>(() => {
+    if (!listId) return [];
+    return loadWordLists().find((item) => item.id === listId)?.wordIds ?? [];
+  });
   const [cards] = useState(() => {
-    const pool = level === 'ALL' ? vocabulary : level === 'FAVORITES' ? vocabulary.filter((word) => favorites.includes(word.id)) : vocabulary.filter((word) => word.level === level);
+    const pool = level === 'ALL' ? vocabulary : level === 'FAVORITES' ? vocabulary.filter((word) => savedWordIds.includes(word.id)) : vocabulary.filter((word) => word.level === level);
     return shuffle(pool).slice(0, count);
   });
   const [index, setIndex] = useState(0);
