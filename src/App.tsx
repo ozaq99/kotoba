@@ -1,5 +1,6 @@
 import Login from '@/auth/Login';
 import Signup from '@/auth/Signup';
+import { useAuth } from '@/auth/useAuth';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, Router as WouterRouter } from 'wouter';
@@ -141,9 +142,10 @@ function Logo() {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const { user, logout } = useAuth();
   useEffect(() => { const onFocus = () => setHistory(loadHistory()); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, []);
   const { current: currentStreak } = useMemo(() => computeStreaks(history), [history]);
   const last7Days = useMemo(() => { const days = new Set(history.map((item) => item.date)); const cursor = new Date(); const result: boolean[] = []; for (let i = 0; i < 7; i += 1) { result.unshift(days.has(toDateKey(cursor))); cursor.setDate(cursor.getDate() - 1); } return result; }, [history]);
@@ -173,7 +175,26 @@ function Shell({ children }: { children: React.ReactNode }) {
     <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-border bg-background/90 px-5 backdrop-blur-md md:ml-[246px] md:px-10">
       <div className="flex items-center gap-3 md:hidden"><button onClick={() => setMenuOpen(!menuOpen)} className="rounded-lg p-2 hover:bg-muted" aria-label="Toggle menu" data-testid="button-menu"><Menu size={21} /></button><Logo /></div>
       <div className="hidden items-center gap-2 text-sm text-muted-foreground md:flex"><span className="mono-label">Mon 24 Jun 2024</span><span className="mx-1 text-border">/</span><span>Keep the words close.</span></div>
-      <div className="flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-[hsl(var(--secondary))]" /> offline-ready</div><div className="grid size-9 place-items-center rounded-full bg-[hsl(var(--primary))] text-sm font-bold text-[hsl(var(--primary-foreground))]">Y</div></div>
+      <div className="flex items-center gap-3">
+        <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-[hsl(var(--secondary))]" /> offline-ready</div>
+        {user ? (
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{user.email}</span>
+            <button
+              onClick={async () => { await logout(); setLocation('/login'); }}
+              className="grid size-9 place-items-center rounded-full bg-[hsl(var(--primary))] text-sm font-bold text-[hsl(var(--primary-foreground))]"
+              title="Log out"
+              data-testid="button-logout"
+            >
+              {user.email?.[0].toUpperCase()}
+            </button>
+          </div>
+        ) : (
+          <Link href="/login" className="rounded-full bg-[hsl(var(--primary))] px-4 py-2 text-sm font-bold text-[hsl(var(--primary-foreground))]">
+            Log in
+          </Link>
+        )}
+      </div>
     </header>
     {menuOpen && <div className="fixed inset-x-0 top-[72px] z-20 border-b border-border bg-card p-4 shadow-md md:hidden"><nav className="grid gap-1">{navItems.map(({ href, label, icon: Icon }) => <Link key={href} onClick={() => setMenuOpen(false)} href={href} className="flex items-center gap-3 rounded-lg px-3 py-3 font-semibold hover:bg-muted"><Icon size={17} />{label}</Link>)}</nav></div>}
     <main className="md:ml-[246px]">{children}</main>
@@ -726,4 +747,3 @@ function App() {
 }
 
 export default App;
-
