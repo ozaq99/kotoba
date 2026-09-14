@@ -1,4 +1,5 @@
 import Login from '@/auth/Login';
+import Signup from '@/auth/Signup';
 import ForgotPassword from '@/auth/ForgotPassword';
 import ResetPassword from '@/auth/ResetPassword';
 import { useAuth } from '@/auth/useAuth';
@@ -742,6 +743,7 @@ function Router() {
     <Route path="/custom" component={() => <ProtectedRoute><CustomWords /></ProtectedRoute>} />
     <Route path="/results" component={() => <ProtectedRoute><Results /></ProtectedRoute>} />
     <Route path="/login" component={Login} />
+    <Route path="/signup" component={Signup} />
     <Route path="/forgot-password" component={ForgotPassword} />
     <Route path="/reset-password" component={ResetPassword} />
     <Route component={NotFound} />
