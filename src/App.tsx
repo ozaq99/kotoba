@@ -20,11 +20,12 @@ import NotFound from '@/pages/not-found';
 import { feedbackAudio, playFeedback, shuffle, vocabulary, type Level, type Word } from '@/lib/vocabulary';
 import {
   addCustomWord, customWordsToWords, deleteCustomWord, loadCustomWords, persistCustomWords, updateCustomWord,
+  sanitizeCustomWords,
   CUSTOM_LEVELS, type CustomWord, type CustomWordDraft,
 } from '@/lib/customWords';
 import {
   createWordList, deleteWordList, loadActiveListId, loadWordLists, persistActiveListId,
-  persistWordLists, renameWordList, toggleWordInList, type WordList,
+  persistWordLists, renameWordList, toggleWordInList, sanitizeLists, type WordList,
 } from '@/lib/wordLists';
 
 const queryClient = new QueryClient();
@@ -129,16 +130,18 @@ function DataProvider({ children }: { children: React.ReactNode }) {
       if (snap.exists()) {
         const data = snap.data();
         if (Array.isArray(data.lists)) {
-          setLists(data.lists);
-          persistWordLists(data.lists);
+          const cleanLists = sanitizeLists(data.lists);   // ← clean BEFORE using
+          setLists(cleanLists);
+          persistWordLists(cleanLists);
         }
-        if (data.activeId) {
+        if (typeof data.activeId === 'string' && data.activeId !== '') {
           setActiveId(data.activeId);
           persistActiveListId(data.activeId);
         }
         if (Array.isArray(data.customWords)) {
-          setCustomWords(data.customWords);
-          persistCustomWords(data.customWords);
+          const cleanWords = sanitizeCustomWords(data.customWords);
+          setCustomWords(cleanWords);
+          persistCustomWords(cleanWords);
         }
       } else {
         setDoc(ref, {

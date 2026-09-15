@@ -1,0 +1,82 @@
+rules_version = '2';
+
+// Kotoba Cabinet — Firestore security rules.
+//
+// WHY THIS FILE MATTERS
+// ---------------------
+// This app has no backend. The browser talks to Firestore directly, so these
+// rules ARE the entire server-side authorisation layer. The client-side
+// <ProtectedRoute> only hides UI — it stops nothing. If the rules deployed in
+// your Firebase console are permissive, any anonymous visitor on the internet
+// can read and overwrite every user's data.
+//
+// Data model used by src/App.tsx:
+//   userData/{uid}  -> { lists: WordList[], activeId: string, customWords: CustomWord[] }
+//
+// Deploy with:  firebase deploy --only firestore:rules
+// Test with:    firebase emulators:exec --only firestore "npm test"
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A user may only touch their own document. Nothing else is readable.
+    match /userData/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Deny everything not matched above. This is what makes the rules fail
+    // closed: a new collection you add later is private by default instead of
+    // accidentally world-readable.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// STRONGER VARIANT (recommended once the app works)
+// ---------------------------------------------------------------------------
+// The rules above let a user write ANY shape to their own document. Combined
+// with the unvalidated onSnapshot handler in src/App.tsx (which only checks
+// Array.isArray), a malformed document crashes the app — and because the app
+// also mirrors it into localStorage, the crash survives a refresh. Validate
+// the shape server-side too:
+//
+//   match /userData/{uid} {
+//     allow read: if request.auth != null && request.auth.uid == uid;
+//
+//     allow create: if request.auth != null
+//                   && request.auth.uid == uid
+//                   && validShape(request.resource.data);
+//
+//     allow update: if request.auth != null
+//                   && request.auth.uid == uid
+//                   && validShape(request.resource.data);
+//
+//     // No delete: the app never deletes the document.
+//     allow delete: if false;
+//   }
+//
+//   function validShape(d) {
+//     return d.keys().hasOnly(['lists', 'activeId', 'customWords'])
+//         && d.lists is list
+//         && d.lists.size() <= 10                      // MAX_SAVE_SLOTS
+//         && d.lists.all(l -> l is map
+//                          && l.keys().hasAll(['id', 'name', 'wordIds', 'createdAt'])
+//                          && l.id is string
+//                          && l.name is string
+//                          && l.name.size() <= 120
+//                          && l.wordIds is list
+//                          && l.wordIds.size() <= 5000
+//                          && l.wordIds.all(w -> w is string))
+//         && d.activeId is string
+//         && d.customWords is list
+//         && d.customWords.size() <= 2000
+//         && d.customWords.all(w -> w is map
+//                              && w.keys().hasAll(['id','expression','reading','meaning','level','createdAt'])
+//                              && w.id is string
+//                              && w.expression is string && w.expression.size() <= 200
+//                              && w.reading is string    && w.reading.size() <= 200
+//                              && w.meaning is string    && w.meaning.size() <= 500
+//                              && w.level in ['N5','N4','N3','N2','N1']);
+//   }

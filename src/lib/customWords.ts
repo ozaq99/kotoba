@@ -1,7 +1,7 @@
 // src/lib/customWords.ts
 // User-added vocabulary — the "personal drawer". Words added here live in
 // their own localStorage key and are NEVER merged into the original
-// CSV-backed `vocabulary` exported from ./vocabulary. The two collections
+// CSV-backed vocabulary exported from ./vocabulary. The two collections
 // stay separate on purpose: the Cabinet shows both (tagging these
 // "My words"), while the /custom page manages the entries stored below.
 
@@ -44,20 +44,33 @@ function normalize(draft: CustomWordDraft) {
   };
 }
 
+/**
+ * Turn ANY value that claims to be a custom word list into a guaranteed-safe one.
+ * Never throws. Bad items are repaired or safely filtered, so users don't lose data.
+ */
+export function sanitizeCustomWords(raw: unknown): CustomWord[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    .filter((item) => typeof item.expression === 'string' && item.expression.trim() !== '')
+    .map((item) => ({
+      id: typeof item.id === 'string' && item.id.trim() !== '' ? item.id : uid(),
+      expression: String(item.expression).trim(),
+      reading: typeof item.reading === 'string' ? item.reading.trim() : '',
+      meaning: typeof item.meaning === 'string' ? item.meaning.trim() : '',
+      level: parseLevel(item.level),
+      createdAt:
+        typeof item.createdAt === 'string' && !isNaN(Date.parse(item.createdAt))
+          ? item.createdAt
+          : new Date().toISOString(),
+    }));
+}
+
 function readStored(): CustomWord[] {
   try {
     const raw = JSON.parse(localStorage.getItem(CUSTOM_WORDS_KEY) || 'null');
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .filter((item) => item && typeof item.id === 'string' && typeof item.expression === 'string' && item.expression.trim() !== '')
-      .map((item) => ({
-        id: String(item.id),
-        expression: String(item.expression),
-        reading: typeof item.reading === 'string' ? item.reading : '',
-        meaning: typeof item.meaning === 'string' ? item.meaning : '',
-        level: parseLevel(item.level),
-        createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
-      }));
+    return sanitizeCustomWords(raw);
   } catch {
     /* ignore malformed storage */
   }
@@ -86,10 +99,16 @@ export function deleteCustomWord(words: CustomWord[], id: string): CustomWord[] 
   return words.filter((word) => word.id !== id);
 }
 
-// Quiz decks deal in the plain `Word` shape, so custom words join the pool
-// through this adapter. The built-in `vocabulary` array itself is never
+// Quiz decks deal in the plain Word shape, so custom words join the pool
+// through this adapter. The built-in vocabulary array itself is never
 // touched — the mix is only assembled inside the quiz component.
 export function customWordsToWords(words: CustomWord[]): Word[] {
-  return words.map((word) => ({ id: word.id, expression: word.expression, reading: word.reading, meaning: word.meaning, level: word.level, tags: [] }));
+  return words.map((word) => ({
+    id: word.id,
+    expression: word.expression,
+    reading: word.reading,
+    meaning: word.meaning,
+    level: word.level,
+    tags: [],
+  }));
 }
-

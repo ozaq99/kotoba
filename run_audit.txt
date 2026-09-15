@@ -1,0 +1,2 @@
+npx esbuild security-audit/fix-sanitize.ts --format=esm --outfile=security-audit/fix.mjs --log-level=error
+node security-audit/verify-fix.mjs

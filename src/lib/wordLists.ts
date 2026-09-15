@@ -14,6 +14,34 @@ const LISTS_KEY = 'kotoba-word-lists';
 const ACTIVE_KEY = 'kotoba-active-list';
 const LEGACY_FAVORITES_KEY = 'kotoba-favorites';
 const DEFAULT_LIST_NAME = 'My Saved Words';
+const MAX_NAME = 120;
+const MAX_WORD_IDS = 5000;
+const FALLBACK_NAME = 'My Saved Words';
+
+/**
+ * Turn ANY value that claims to be a word list into a guaranteed-safe one.
+ * Never throws. Bad items are repaired, not dropped, so users don't lose data.
+ */
+export function sanitizeLists(raw: unknown): WordList[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .filter((item): item is Record<string, unknown> =>
+      typeof item === 'object' && item !== null)
+    .filter((item) => typeof item.id === 'string' && item.id !== '')
+    .map((item) => ({
+      id: String(item.id),
+      name: typeof item.name === 'string' && item.name.trim() !== ''
+        ? item.name.slice(0, MAX_NAME)
+        : FALLBACK_NAME,
+      wordIds: Array.isArray(item.wordIds)
+        ? item.wordIds.filter((w): w is string => typeof w === 'string').slice(0, MAX_WORD_IDS)
+        : [],
+      createdAt: typeof item.createdAt === 'string'
+        ? item.createdAt
+        : new Date().toISOString(),
+    }));
+}
 
 function uid() {
   return `list-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -25,12 +53,10 @@ function makeList(name: string, wordIds: string[] = []): WordList {
 
 function readStoredLists(): WordList[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(LISTS_KEY) || 'null');
-    if (Array.isArray(raw)) return raw.filter((item) => item && typeof item.id === 'string');
+    return sanitizeLists(JSON.parse(localStorage.getItem(LISTS_KEY) || 'null'));
   } catch {
-    /* ignore malformed storage */
+    return [];
   }
-  return [];
 }
 
 // One-time upgrade path: if someone has the old single favorites array and
