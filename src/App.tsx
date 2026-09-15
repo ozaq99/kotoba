@@ -1,9 +1,9 @@
 import Login from '@/auth/Login';
 import ForgotPassword from '@/auth/ForgotPassword';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 import { useAuth } from '@/auth/useAuth';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
 import { doc, onSnapshot, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 import { db } from '@/utils/firebase/client';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -60,11 +60,10 @@ function sanitizeHistory(history: any[]): HistoryEntry[] {
   if (!Array.isArray(history)) return [];
   return history
     .filter((item) => item && typeof item.date === 'string' && typeof item.score === 'number' && typeof item.total === 'number')
-      .map((item) => ({
+    .map((item) => ({
       date: item.date,
       score: item.score,
       total: item.total,
-      // IMPORTANT: Firestore crashes on `undefined`, so only add `level` if it exists
       ...(typeof item.level === 'string' ? { level: item.level } : {}),
     }));
 }
@@ -75,18 +74,13 @@ function computeProgress(history: HistoryEntry[]) {
     if (total === 0) return null;
     return Math.round((items.reduce((sum, h) => sum + h.score, 0) / total) * 100);
   };
-
   const totalQuizzes = history.length;
   const totalCards = history.reduce((sum, h) => sum + h.total, 0);
   const average = pct(history) ?? 0;
   const best = history.reduce((b, h) => Math.max(b, Math.round((h.score / h.total) * 100)), 0);
-
-  // Trend: last 5 quizzes vs the 5 before that. Positive = improving.
   const recent = pct(history.slice(-5));
   const older = pct(history.slice(-10, -5));
   const trend = recent !== null && older !== null ? recent - older : null;
-
-  // Per-level breakdown: { "N5": {score, total}, "N3 + N2": {...}, ... }
   const byLevel: Record<string, { score: number; total: number }> = {};
   for (const h of history) {
     const key = h.level ?? 'Unknown';
@@ -94,15 +88,8 @@ function computeProgress(history: HistoryEntry[]) {
     byLevel[key].score += h.score;
     byLevel[key].total += h.total;
   }
-
-  // Last 20 quizzes, shaped for the chart
-  const chart = history.slice(-20).map((h, i) => ({
-    name: `#${history.length - Math.min(history.length, 20) + i + 1}`,
-    pct: Math.round((h.score / h.total) * 100),
-    date: h.date,
-  }));
-
-  // Quizzes per day for the last 14 days (activity)
+  const start = Math.max(0, history.length - 20);
+  const chart = history.slice(-20).map((h, i) => ({ name: `#${start + i + 1}`, pct: Math.round((h.score / h.total) * 100), date: h.date }));
   const activity: { day: string; quizzes: number }[] = [];
   const cursor = new Date();
   for (let i = 0; i < 14; i += 1) {
@@ -110,7 +97,6 @@ function computeProgress(history: HistoryEntry[]) {
     activity.unshift({ day: key.slice(5), quizzes: history.filter((h) => h.date === key).length });
     cursor.setDate(cursor.getDate() - 1);
   }
-
   return { totalQuizzes, totalCards, average, best, trend, byLevel, chart, activity };
 }
 
@@ -301,18 +287,20 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     pushToCloud({ customWords: next });
   };
 
-  // Writes (or deletes) MY card in the public `leaderboard` collection.
-  const publishSummary = (nextHistory: HistoryEntry[], share: boolean, name: string = nickname) => {
+  // Writes (or removes) MY card in the public `leaderboard` collection.
+  // A card only exists when: sharing is on AND a nickname is set AND there is history.
+  const publishSummary = (nextHistory: HistoryEntry[], share: boolean, name: string) => {
     if (!user) return;
-    const ref = doc(db, 'leaderboard', user.uid);          // "the card with my uid"
-    if (!share || nextHistory.length === 0) {
-      deleteDoc(ref).catch(() => {});                      // opted out → remove my card
+    const ref = doc(db, 'leaderboard', user.uid);
+    const cleanName = name.trim().slice(0, 30);
+    if (!share || !cleanName || nextHistory.length === 0) {
+      deleteDoc(ref).catch(() => {});
       return;
     }
-    const p = computeProgress(nextHistory);                // from Part A
+    const p = computeProgress(nextHistory);
     const { current } = computeStreaks(nextHistory);
     setDoc(ref, {
-      displayName: (user.displayName || user.email?.split('@')[0] || 'Learner').slice(0, 30),
+      displayName: cleanName,
       totalQuizzes: p.totalQuizzes,
       avgPct: p.average,
       bestPct: p.best,
@@ -320,18 +308,20 @@ function DataProvider({ children }: { children: React.ReactNode }) {
       updatedAt: new Date().toISOString(),
     }).catch(console.error);
   };
+
   const saveNickname = (raw: string) => {
     const next = raw.trim().slice(0, 30);
     setNickname(next);
     localStorage.setItem('kotoba-nickname', next);
     pushToCloud({ nickname: next });
-    publishSummary(history, shareScores, next);   // update my public card right away
+    publishSummary(history, shareScores, next);
   };
+
   const toggleShareScores = (next: boolean) => {
     setShareScores(next);
     localStorage.setItem('kotoba-share', next ? '1' : '0');
     pushToCloud({ shareScores: next });
-    publishSummary(history, next);
+    publishSummary(history, next, nickname);
   };
 
   const recordHistoryFn = (entry: HistoryEntry) => {
@@ -339,14 +329,14 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     setHistory(next);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
     pushToCloud({ history: next });
-    publishSummary(next, shareScores);                     // ← NEW: update my card after each quiz
+    publishSummary(next, shareScores, nickname);
   };
 
   const clearHistoryFn = () => {
     setHistory([]);
     localStorage.removeItem(HISTORY_KEY);
     pushToCloud({ history: [] });
-    publishSummary([], shareScores);                       // ← NEW: no history → remove card
+    publishSummary([], shareScores, nickname);
   };
 
   const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
@@ -1047,52 +1037,53 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Progress page — "how far is my study progress?"
+// ─────────────────────────────────────────────────────────────────────────────
 function Progress() {
   const { history } = useCabinetHistory();
   const p = useMemo(() => computeProgress(history), [history]);
   const { current: currentRun, best: bestRun } = useMemo(() => computeStreaks(history), [history]);
 
   if (history.length === 0) {
-    return <div className="mx-auto max-w-[720px] px-5 py-20 text-center">
-      <h1 className="font-serif text-4xl">Nothing to measure yet.</h1>
+    return <div className="mx-auto max-w-[720px] px-5 py-20 pb-28 text-center md:pb-12">
+      <div className="mx-auto grid size-16 place-items-center rounded-2xl bg-[hsl(var(--accent)/.17)] text-[hsl(var(--accent))]"><TrendingUp /></div>
+      <h1 className="mt-6 font-serif text-4xl">Nothing to measure yet.</h1>
       <p className="mt-3 text-sm text-muted-foreground">Finish a quiz and your progress will show up here.</p>
       <Link href="/quiz" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-[hsl(var(--primary))] px-5 py-3 text-sm font-bold text-[hsl(var(--primary-foreground))]">Start a round <ArrowRight size={16} /></Link>
     </div>;
   }
 
-  const trendLabel = p.trend === null ? 'need 10+ quizzes' : p.trend > 0 ? `▲ +${p.trend}% vs before` : p.trend < 0 ? `▼ ${p.trend}% vs before` : '→ steady';
+  const trendNote = p.trend === null ? 'need 10+ quizzes' : p.trend > 0 ? `up vs previous 5` : p.trend < 0 ? `down vs previous 5` : 'steady';
 
   return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:pb-12" data-testid="progress-page">
     <p className="mono-label text-muted-foreground">Progress / analysis</p>
     <h1 className="mt-2 font-serif text-4xl tracking-[-.04em]">How far you've come.</h1>
 
-    {/* Headline numbers */}
     <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <StatCard icon={Target} label="Average score" value={`${p.average}%`} note={`${p.totalQuizzes} quizzes · ${p.totalCards} cards`} color="hsl(69 73% 45%)" />
-      <StatCard icon={Trophy} label="Best round" value={`${p.best}%`} note="personal record" color="hsl(var(--accent))" />
-      <StatCard icon={Flame} label="Streak" value={`${currentRun}d`} note={`best ${bestRun} days`} color="hsl(var(--secondary))" />
-      <StatCard icon={ArrowRight} label="Trend" value={p.trend === null ? '—' : `${p.trend > 0 ? '+' : ''}${p.trend}%`} note={trendLabel} color="hsl(var(--primary))" />
+      <StatCard icon={Trophy} label="Best round" value={`${p.best}%`} note="personal record" color="hsl(38 68% 50%)" />
+      <StatCard icon={Flame} label="Streak" value={`${currentRun}d`} note={`best ${bestRun} days`} color="hsl(11 77% 55%)" />
+      <StatCard icon={TrendingUp} label="Trend" value={p.trend === null ? '—' : `${p.trend > 0 ? '+' : ''}${p.trend}%`} note={trendNote} color="hsl(194 71% 42%)" />
     </div>
 
-    {/* Score over time */}
     <section className="mt-6 rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
       <p className="mono-label text-muted-foreground">Last 20 rounds</p>
       <h2 className="mt-2 font-serif text-2xl">Score over time</h2>
       <div className="mt-6 h-64">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={p.chart}>
+          <LineChart data={p.chart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            <XAxis dataKey="name" fontSize={11} />
-            <YAxis domain={[0, 100]} fontSize={11} unit="%" />
-            <Tooltip formatter={(v: number) => `${v}%`} labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ''} />
-            <Line type="monotone" dataKey="pct" stroke="hsl(69 73% 45%)" strokeWidth={3} dot={{ r: 4 }} />
+            <XAxis dataKey="name" fontSize={11} tickLine={false} />
+            <YAxis domain={[0, 100]} fontSize={11} unit="%" tickLine={false} />
+            <Tooltip formatter={(v: number) => [`${v}%`, 'Score']} labelFormatter={(_, payload) => (payload?.[0]?.payload as { date?: string } | undefined)?.date ?? ''} />
+            <Line type="monotone" dataKey="pct" stroke="hsl(69 73% 40%)" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
     </section>
 
     <div className="mt-6 grid gap-6 lg:grid-cols-2">
-      {/* Per-level */}
       <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
         <p className="mono-label text-muted-foreground">By drawer</p>
         <h2 className="mt-2 font-serif text-2xl">Where you're strong</h2>
@@ -1101,23 +1092,22 @@ function Progress() {
             const pct = Math.round((s.score / s.total) * 100);
             return <li key={level}>
               <div className="mb-1.5 flex justify-between text-sm font-bold"><span>{level}</span><span className="text-muted-foreground">{pct}% · {s.total} cards</span></div>
-              <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[hsl(var(--secondary))]" style={{ width: `${pct}%` }} /></div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[hsl(var(--secondary))] transition-all" style={{ width: `${pct}%` }} /></div>
             </li>;
           })}
         </ul>
       </section>
 
-      {/* Activity */}
       <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
         <p className="mono-label text-muted-foreground">Last 14 days</p>
         <h2 className="mt-2 font-serif text-2xl">Consistency</h2>
         <div className="mt-6 h-48">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={p.activity}>
-              <XAxis dataKey="day" fontSize={10} />
-              <YAxis allowDecimals={false} fontSize={11} />
-              <Tooltip />
-              <Bar dataKey="quizzes" fill="hsl(var(--accent))" radius={[6, 6, 0, 0]} />
+            <BarChart data={p.activity} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+              <XAxis dataKey="day" fontSize={10} tickLine={false} />
+              <YAxis allowDecimals={false} fontSize={11} tickLine={false} />
+              <Tooltip formatter={(v: number) => [v, 'Quizzes']} />
+              <Bar dataKey="quizzes" fill="hsl(38 68% 59%)" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -1126,65 +1116,76 @@ function Progress() {
   </div>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard page — see other learners (opt-in, nickname required)
+// ─────────────────────────────────────────────────────────────────────────────
 type LeaderRow = { uid: string; displayName: string; totalQuizzes: number; avgPct: number; bestPct: number; streak: number; updatedAt: string };
 
 function Leaderboard() {
   const { user } = useAuth();
-  const { shareScores, toggleShareScores, nickname, saveNickname } = useCabinetHistory();
+  const { history, shareScores, toggleShareScores, nickname, saveNickname } = useCabinetHistory();
   const [draft, setDraft] = useState(nickname);
-  useEffect(() => setDraft(nickname), [nickname]);   // keep box in sync if cloud changes it
   const [rows, setRows] = useState<LeaderRow[] | null>(null);
   const [sortBy, setSortBy] = useState<'avgPct' | 'totalQuizzes' | 'streak'>('avgPct');
 
-  // Fetch top 50 cards, sorted. Re-runs when sort changes or you toggle sharing.
+  useEffect(() => { setDraft(nickname); }, [nickname]);
+
   useEffect(() => {
+    let cancelled = false;
+    setRows(null);
     getDocs(query(collection(db, 'leaderboard'), orderBy(sortBy, 'desc'), limit(50)))
-      .then((snap) => setRows(snap.docs.map((d) => ({ uid: d.id, ...(d.data() as Omit<LeaderRow, 'uid'>) }))))
-      .catch((err) => { console.error(err); setRows([]); });
-  }, [sortBy, shareScores]);
+      .then((snap) => { if (!cancelled) setRows(snap.docs.map((d) => ({ uid: d.id, ...(d.data() as Omit<LeaderRow, 'uid'>) }))); })
+      .catch((err) => { console.error(err); if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, [sortBy, shareScores, nickname, history.length]);
+
+  const hasNickname = nickname.trim().length > 0;
+  const canSave = draft.trim().length > 0 && draft.trim() !== nickname;
 
   return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:pb-12" data-testid="leaderboard-page">
     <p className="mono-label text-muted-foreground">Community / leaderboard</p>
     <h1 className="mt-2 font-serif text-4xl tracking-[-.04em]">Who's been studying.</h1>
-    <form onSubmit={(e) => { e.preventDefault(); saveNickname(draft); }} className="mt-6 flex items-center gap-3 rounded-2xl border border-border bg-card p-4">
-      <div className="flex-1">
+
+    <form onSubmit={(e) => { e.preventDefault(); if (canSave) saveNickname(draft); }} className="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-4">
+      <div className="min-w-[180px] flex-1">
         <label htmlFor="nickname" className="block text-sm font-bold">Your nickname</label>
-        <span className="text-xs text-muted-foreground">This is the name other learners will see.</span>
+        <span className="text-xs text-muted-foreground">{hasNickname ? 'This is the name other learners see.' : 'Required before you can appear on the board.'}</span>
       </div>
-      <input id="nickname" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={30} placeholder="e.g. Wowok" className="h-10 w-40 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-nickname" />
-      <button type="submit" disabled={draft.trim() === nickname} className="rounded-xl bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--primary-foreground))] disabled:opacity-40" data-testid="button-save-nickname">Save</button>
+      <input id="nickname" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={30} placeholder="e.g. Wowok" className="h-10 w-44 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-nickname" />
+      <button type="submit" disabled={!canSave} className="rounded-xl bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:opacity-40" data-testid="button-save-nickname">Save</button>
     </form>
-    <label className="mt-6 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4">
+
+    <label className={cx('mt-3 flex items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4', hasNickname ? 'cursor-pointer' : 'opacity-50')}>
       <span>
         <span className="block text-sm font-bold">Share my scores</span>
-        <span className="text-xs text-muted-foreground">Only your name, average, best, quiz count and streak are shared. Turn off any time.</span>
+        <span className="text-xs text-muted-foreground">Only your nickname, average, best, quiz count and streak are shared. Turn off any time.</span>
       </span>
-      <input type="checkbox" checked={shareScores} onChange={(e) => toggleShareScores(e.target.checked)} className="size-5 accent-[hsl(var(--accent))]" data-testid="toggle-share-scores" />
+      <input type="checkbox" checked={shareScores} disabled={!hasNickname} onChange={(e) => toggleShareScores(e.target.checked)} className="size-5 accent-[hsl(var(--accent))]" data-testid="toggle-share-scores" />
     </label>
 
     <div className="mt-6 flex gap-2">
       {([['avgPct', 'Average'], ['totalQuizzes', 'Most quizzes'], ['streak', 'Streak']] as const).map(([key, label]) =>
-        <button key={key} onClick={() => setSortBy(key)} className={cx('rounded-xl border px-3 py-2 text-xs font-bold', sortBy === key ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')}>{label}</button>)}
+        <button key={key} onClick={() => setSortBy(key)} className={cx('rounded-xl border px-3 py-2 text-xs font-bold', sortBy === key ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')} data-testid={`leaderboard-sort-${key}`}>{label}</button>)}
     </div>
 
     <section className="mt-4 overflow-hidden rounded-[1.75rem] border border-border bg-card">
       {rows === null && <p className="p-8 text-center text-sm text-muted-foreground">Loading…</p>}
-      {rows?.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Nobody is sharing yet. Be the first — flip the switch above.</p>}
-      {rows && rows.length > 0 && <table className="w-full text-sm">
+      {rows?.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Nobody is sharing yet. Set a nickname and flip the switch above to be first.</p>}
+      {rows && rows.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm">
         <thead className="bg-muted text-left"><tr>
           <th className="mono-label p-3">#</th><th className="mono-label p-3">Learner</th>
           <th className="mono-label p-3 text-right">Avg</th><th className="mono-label p-3 text-right">Best</th>
           <th className="mono-label p-3 text-right">Quizzes</th><th className="mono-label p-3 text-right">Streak</th>
         </tr></thead>
         <tbody>
-          {rows.map((r, i) => <tr key={r.uid} className={cx('border-t border-border', r.uid === user?.uid && 'bg-[hsl(var(--accent)/.10)] font-bold')}>
+          {rows.map((r, i) => <tr key={r.uid} className={cx('border-t border-border', r.uid === user?.uid && 'bg-[hsl(var(--accent)/.10)] font-bold')} data-testid={`leaderboard-row-${i + 1}`}>
             <td className="p-3 font-mono text-muted-foreground">{i + 1}</td>
             <td className="p-3">{r.displayName}{r.uid === user?.uid && <span className="ml-2 text-xs font-normal text-muted-foreground">(you)</span>}</td>
             <td className="p-3 text-right">{r.avgPct}%</td><td className="p-3 text-right">{r.bestPct}%</td>
             <td className="p-3 text-right">{r.totalQuizzes}</td><td className="p-3 text-right">{r.streak}d</td>
           </tr>)}
         </tbody>
-      </table>}
+      </table></div>}
     </section>
   </div>;
 }
@@ -1195,8 +1196,8 @@ function Router() {
     <Route path="/quiz" component={() => <ProtectedRoute><Quiz /></ProtectedRoute>} />
     <Route path="/custom" component={() => <ProtectedRoute><CustomWords /></ProtectedRoute>} />
     <Route path="/results" component={() => <ProtectedRoute><Results /></ProtectedRoute>} />
-    <Route path="/leaderboard" component={() => <ProtectedRoute><Leaderboard /></ProtectedRoute>} />
     <Route path="/progress" component={() => <ProtectedRoute><Progress /></ProtectedRoute>} />
+    <Route path="/leaderboard" component={() => <ProtectedRoute><Leaderboard /></ProtectedRoute>} />
     <Route path="/login" component={Login} />
     <Route path="/forgot-password" component={ForgotPassword} />
     <Route component={NotFound} />

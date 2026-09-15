@@ -1,16 +1,29 @@
 rules_version = '2';
 
+// Kotoba Cabinet — Firestore security rules.
+//
+// This app has no backend. The browser talks to Firestore directly, so these
+// rules ARE the entire server-side authorisation layer.
+//
+// Data model:
+//   userData/{uid}     -> private. { lists, activeId, customWords, history, shareScores, nickname }
+//   leaderboard/{uid}  -> public summary, written by the app when the user opts in.
+//                         { displayName, totalQuizzes, avgPct, bestPct, streak, updatedAt }
+//
+// Deploy: Firebase Console -> Firestore Database -> Rules tab -> paste -> Publish
+//     or: firebase deploy --only firestore:rules
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Private data. Only the owner can read/write. (unchanged) ──
+    // Private data. Only the owner can read/write.
     match /userData/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // ── NEW: public score summaries ──
-    // Anyone logged in can READ the whole list.
-    // You can only WRITE/DELETE your own card, and only with these exact 6 fields.
+    // Public score summaries.
+    // Any signed-in user can read the list. You can only write/delete your own
+    // card, and only with exactly these 6 fields in valid ranges.
     match /leaderboard/{uid} {
       allow read: if request.auth != null;
 
@@ -35,7 +48,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt is string;
     }
 
-    // ── Everything else: blocked. (unchanged) ──
+    // Everything else: blocked.
     match /{document=**} {
       allow read, write: if false;
     }
