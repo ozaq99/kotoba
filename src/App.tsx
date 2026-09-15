@@ -3,7 +3,7 @@ import ForgotPassword from '@/auth/ForgotPassword';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 import { useAuth } from '@/auth/useAuth';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, deleteDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/utils/firebase/client';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -173,6 +173,8 @@ interface DataContextType {
   history: HistoryEntry[];
   recordHistory: (entry: HistoryEntry) => void;
   clearHistory: () => void;
+  shareScores: boolean;
+  toggleShareScores: (next: boolean) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -183,6 +185,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
   const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
   const [customWords, setCustomWords] = useState<CustomWord[]>(() => loadCustomWords());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const [shareScores, setShareScores] = useState<boolean>(() => localStorage.getItem('kotoba-share') === '1');
 
   useEffect(() => {
     if (!user) return;
@@ -210,6 +213,10 @@ function DataProvider({ children }: { children: React.ReactNode }) {
           setHistory(cleanHistory);
           localStorage.setItem(HISTORY_KEY, JSON.stringify(cleanHistory));
         }
+        if (typeof data.shareScores === 'boolean') {
+          setShareScores(data.shareScores);
+          localStorage.setItem('kotoba-share', data.shareScores ? '1' : '0');
+        }
       } else {
         setDoc(ref, {
           lists: loadWordLists(),
@@ -223,7 +230,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [user]);
 
-  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[]; history?: HistoryEntry[] }) => {
+  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[]; history?: HistoryEntry[]; shareScores?: boolean }) => {
     if (!user) return;
     setDoc(doc(db, 'userData', user.uid), payload, { merge: true }).catch(console.error);
   };
@@ -287,17 +294,46 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     pushToCloud({ customWords: next });
   };
 
+  // Writes (or deletes) MY card in the public `leaderboard` collection.
+  const publishSummary = (nextHistory: HistoryEntry[], share: boolean) => {
+    if (!user) return;
+    const ref = doc(db, 'leaderboard', user.uid);          // "the card with my uid"
+    if (!share || nextHistory.length === 0) {
+      deleteDoc(ref).catch(() => {});                      // opted out → remove my card
+      return;
+    }
+    const p = computeProgress(nextHistory);                // from Part A
+    const { current } = computeStreaks(nextHistory);
+    setDoc(ref, {
+      displayName: (user.displayName || user.email?.split('@')[0] || 'Learner').slice(0, 30),
+      totalQuizzes: p.totalQuizzes,
+      avgPct: p.average,
+      bestPct: p.best,
+      streak: current,
+      updatedAt: new Date().toISOString(),
+    }).catch(console.error);
+  };
+
+  const toggleShareScores = (next: boolean) => {
+    setShareScores(next);
+    localStorage.setItem('kotoba-share', next ? '1' : '0');
+    pushToCloud({ shareScores: next });
+    publishSummary(history, next);
+  };
+
   const recordHistoryFn = (entry: HistoryEntry) => {
     const next = [...history, entry].slice(-300);
     setHistory(next);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
     pushToCloud({ history: next });
+    publishSummary(next, shareScores);                     // ← NEW: update my card after each quiz
   };
 
   const clearHistoryFn = () => {
     setHistory([]);
     localStorage.removeItem(HISTORY_KEY);
     pushToCloud({ history: [] });
+    publishSummary([], shareScores);                       // ← NEW: no history → remove card
   };
 
   const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
@@ -326,6 +362,8 @@ function DataProvider({ children }: { children: React.ReactNode }) {
         history,
         recordHistory: recordHistoryFn,
         clearHistory: clearHistoryFn,
+        shareScores,
+        toggleShareScores,
       }}
     >
       {children}
@@ -368,6 +406,8 @@ function useCabinetHistory() {
     history: ctx.history,
     recordHistory: ctx.recordHistory,
     clearHistory: ctx.clearHistory,
+    shareScores: ctx.shareScores,
+    toggleShareScores: ctx.toggleShareScores,
   };
 }
 
@@ -396,6 +436,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     { href: '/custom', label: 'My words', icon: BookPlus },
     { href: '/results', label: 'Review', icon: Trophy },
     { href: '/progress', label: 'Progress', icon: TrendingUp },
+    { href: '/leaderboard', label: 'Leaderboard', icon: Users },
   ];
   return <div className="paper-grain min-h-[100dvh] bg-background">
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[246px] flex-col bg-[hsl(var(--sidebar))] px-5 py-6 text-[hsl(var(--sidebar-foreground))] md:flex">
@@ -1068,12 +1109,67 @@ function Progress() {
   </div>;
 }
 
+type LeaderRow = { uid: string; displayName: string; totalQuizzes: number; avgPct: number; bestPct: number; streak: number; updatedAt: string };
+
+function Leaderboard() {
+  const { user } = useAuth();
+  const { shareScores, toggleShareScores } = useCabinetHistory();
+  const [rows, setRows] = useState<LeaderRow[] | null>(null);
+  const [sortBy, setSortBy] = useState<'avgPct' | 'totalQuizzes' | 'streak'>('avgPct');
+
+  // Fetch top 50 cards, sorted. Re-runs when sort changes or you toggle sharing.
+  useEffect(() => {
+    getDocs(query(collection(db, 'leaderboard'), orderBy(sortBy, 'desc'), limit(50)))
+      .then((snap) => setRows(snap.docs.map((d) => ({ uid: d.id, ...(d.data() as Omit<LeaderRow, 'uid'>) }))))
+      .catch((err) => { console.error(err); setRows([]); });
+  }, [sortBy, shareScores]);
+
+  return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:pb-12" data-testid="leaderboard-page">
+    <p className="mono-label text-muted-foreground">Community / leaderboard</p>
+    <h1 className="mt-2 font-serif text-4xl tracking-[-.04em]">Who's been studying.</h1>
+
+    <label className="mt-6 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4">
+      <span>
+        <span className="block text-sm font-bold">Share my scores</span>
+        <span className="text-xs text-muted-foreground">Only your name, average, best, quiz count and streak are shared. Turn off any time.</span>
+      </span>
+      <input type="checkbox" checked={shareScores} onChange={(e) => toggleShareScores(e.target.checked)} className="size-5 accent-[hsl(var(--accent))]" data-testid="toggle-share-scores" />
+    </label>
+
+    <div className="mt-6 flex gap-2">
+      {([['avgPct', 'Average'], ['totalQuizzes', 'Most quizzes'], ['streak', 'Streak']] as const).map(([key, label]) =>
+        <button key={key} onClick={() => setSortBy(key)} className={cx('rounded-xl border px-3 py-2 text-xs font-bold', sortBy === key ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]' : 'border-border hover:bg-muted')}>{label}</button>)}
+    </div>
+
+    <section className="mt-4 overflow-hidden rounded-[1.75rem] border border-border bg-card">
+      {rows === null && <p className="p-8 text-center text-sm text-muted-foreground">Loading…</p>}
+      {rows?.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Nobody is sharing yet. Be the first — flip the switch above.</p>}
+      {rows && rows.length > 0 && <table className="w-full text-sm">
+        <thead className="bg-muted text-left"><tr>
+          <th className="mono-label p-3">#</th><th className="mono-label p-3">Learner</th>
+          <th className="mono-label p-3 text-right">Avg</th><th className="mono-label p-3 text-right">Best</th>
+          <th className="mono-label p-3 text-right">Quizzes</th><th className="mono-label p-3 text-right">Streak</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => <tr key={r.uid} className={cx('border-t border-border', r.uid === user?.uid && 'bg-[hsl(var(--accent)/.10)] font-bold')}>
+            <td className="p-3 font-mono text-muted-foreground">{i + 1}</td>
+            <td className="p-3">{r.displayName}{r.uid === user?.uid && <span className="ml-2 text-xs font-normal text-muted-foreground">(you)</span>}</td>
+            <td className="p-3 text-right">{r.avgPct}%</td><td className="p-3 text-right">{r.bestPct}%</td>
+            <td className="p-3 text-right">{r.totalQuizzes}</td><td className="p-3 text-right">{r.streak}d</td>
+          </tr>)}
+        </tbody>
+      </table>}
+    </section>
+  </div>;
+}
+
 function Router() {
   return <RoutedErrorBoundary><Shell><Switch>
     <Route path="/" component={() => <ProtectedRoute><Cabinet /></ProtectedRoute>} />
     <Route path="/quiz" component={() => <ProtectedRoute><Quiz /></ProtectedRoute>} />
     <Route path="/custom" component={() => <ProtectedRoute><CustomWords /></ProtectedRoute>} />
     <Route path="/results" component={() => <ProtectedRoute><Results /></ProtectedRoute>} />
+    <Route path="/leaderboard" component={() => <ProtectedRoute><Leaderboard /></ProtectedRoute>} />
     <Route path="/progress" component={() => <ProtectedRoute><Progress /></ProtectedRoute>} />
     <Route path="/login" component={Login} />
     <Route path="/forgot-password" component={ForgotPassword} />
