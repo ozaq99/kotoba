@@ -55,7 +55,17 @@ type HistoryEntry = { date: string; score: number; total: number };
 const HISTORY_KEY = 'kotoba-history';
 function toDateKey(date: Date) { return date.toISOString().slice(0, 10); }
 function loadHistory(): HistoryEntry[] { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; } }
-function recordHistory(entry: HistoryEntry) { const current = loadHistory(); current.push(entry); localStorage.setItem(HISTORY_KEY, JSON.stringify(current.slice(-300))); }
+function sanitizeHistory(history: any[]): HistoryEntry[] {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((item) => item && typeof item.date === 'string' && typeof item.score === 'number' && typeof item.total === 'number')
+    .map((item) => ({
+      date: item.date,
+      score: item.score,
+      total: item.total
+    }));
+}
+
 function computeStreaks(history: HistoryEntry[]) {
   const days = new Set(history.map((item) => item.date));
   let current = 0;
@@ -93,7 +103,7 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
 }
 
 // -------------------------------------------------------------
-// CLOUD USER DATA CONTEXT (Cross-device sync for saved & custom words)
+// CLOUD USER DATA CONTEXT (Cross-device sync for saved, custom words & history)
 // -------------------------------------------------------------
 const MAX_SAVE_SLOTS = 10;
 
@@ -112,6 +122,9 @@ interface DataContextType {
   addCustomWord: (draft: CustomWordDraft) => void;
   updateCustomWord: (id: string, draft: CustomWordDraft) => void;
   removeCustomWord: (id: string) => void;
+  history: HistoryEntry[];
+  recordHistory: (entry: HistoryEntry) => void;
+  clearHistory: () => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -121,6 +134,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
   const [lists, setLists] = useState<WordList[]>(() => loadWordLists());
   const [activeId, setActiveId] = useState<string>(() => loadActiveListId(loadWordLists()));
   const [customWords, setCustomWords] = useState<CustomWord[]>(() => loadCustomWords());
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
 
   useEffect(() => {
     if (!user) return;
@@ -130,7 +144,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
       if (snap.exists()) {
         const data = snap.data();
         if (Array.isArray(data.lists)) {
-          const cleanLists = sanitizeLists(data.lists);   // ← clean BEFORE using
+          const cleanLists = sanitizeLists(data.lists);
           setLists(cleanLists);
           persistWordLists(cleanLists);
         }
@@ -143,11 +157,17 @@ function DataProvider({ children }: { children: React.ReactNode }) {
           setCustomWords(cleanWords);
           persistCustomWords(cleanWords);
         }
+        if (Array.isArray(data.history)) {
+          const cleanHistory = sanitizeHistory(data.history);
+          setHistory(cleanHistory);
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(cleanHistory));
+        }
       } else {
         setDoc(ref, {
           lists: loadWordLists(),
           activeId: loadActiveListId(loadWordLists()),
           customWords: loadCustomWords(),
+          history: loadHistory(),
         });
       }
     });
@@ -155,7 +175,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [user]);
 
-  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[] }) => {
+  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[]; history?: HistoryEntry[] }) => {
     if (!user) return;
     setDoc(doc(db, 'userData', user.uid), payload, { merge: true }).catch(console.error);
   };
@@ -219,6 +239,19 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     pushToCloud({ customWords: next });
   };
 
+  const recordHistoryFn = (entry: HistoryEntry) => {
+    const next = [...history, entry].slice(-300);
+    setHistory(next);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    pushToCloud({ history: next });
+  };
+
+  const clearHistoryFn = () => {
+    setHistory([]);
+    localStorage.removeItem(HISTORY_KEY);
+    pushToCloud({ history: [] });
+  };
+
   const activeList = useMemo(() => lists.find((list) => list.id === activeId) ?? lists[0], [lists, activeId]);
 
   return (
@@ -242,6 +275,9 @@ function DataProvider({ children }: { children: React.ReactNode }) {
         addCustomWord: addWord,
         updateCustomWord: editWord,
         removeCustomWord: removeWord,
+        history,
+        recordHistory: recordHistoryFn,
+        clearHistory: clearHistoryFn,
       }}
     >
       {children}
@@ -277,6 +313,16 @@ function useCustomWords() {
   };
 }
 
+function useCabinetHistory() {
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useCabinetHistory must be used within DataProvider');
+  return {
+    history: ctx.history,
+    recordHistory: ctx.recordHistory,
+    clearHistory: ctx.clearHistory,
+  };
+}
+
 function Logo() {
   return <Link href="/" className="flex items-center gap-3" data-testid="link-logo">
     <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[hsl(var(--accent))] text-[hsl(var(--foreground))] hard-shadow rotate-[-4deg]">
@@ -289,11 +335,11 @@ function Logo() {
 function Shell({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const { history } = useCabinetHistory();
   const { user, logout } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  useEffect(() => { const onFocus = () => setHistory(loadHistory()); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, []);
+
   const { current: currentStreak } = useMemo(() => computeStreaks(history), [history]);
   const last7Days = useMemo(() => { const days = new Set(history.map((item) => item.date)); const cursor = new Date(); const result: boolean[] = []; for (let i = 0; i < 7; i += 1) { result.unshift(days.has(toDateKey(cursor))); cursor.setDate(cursor.getDate() - 1); } return result; }, [history]);
   const navItems = [
@@ -376,6 +422,7 @@ function LevelPill({ level }: { level: Level }) {
   return <span className="mono-label inline-flex items-center rounded-full px-2 py-1 text-[10px] font-semibold" style={{ color: levelColor[level], backgroundColor: `${levelColor[level]}22` }}>{level}</span>;
 }
 
+// Simple Title component
 function SectionTitle({ eyebrow, title, action }: { eyebrow: string; title: string; action?: React.ReactNode }) {
   return <div className="mb-5 flex items-end justify-between gap-4"><div><p className="mono-label mb-2 text-[hsl(var(--secondary))]">{eyebrow}</p><h2 className="font-serif text-3xl tracking-[-.035em] md:text-4xl">{title}</h2></div>{action}</div>;
 }
@@ -592,16 +639,22 @@ function Cabinet() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const wordLists = useWordLists();
   const { activeList, toggleWord } = wordLists;
-  // Personal-drawer words, shown in the Cabinet alongside the built-in set.
   const { words: myCustomWords } = useCustomWords();
+  const { history, clearHistory } = useCabinetHistory();
   const [visible, setVisible] = useState(24);
   const [ready, setReady] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+
   useEffect(() => { const id = window.setTimeout(() => setReady(true), 180); return () => window.clearTimeout(id); }, []);
+
   const { current: currentRun, best: bestRun } = useMemo(() => computeStreaks(history), [history]);
   const lastEntry = history[history.length - 1];
   const lastScorePct = lastEntry ? Math.round((lastEntry.score / lastEntry.total) * 100) : null;
-  const resetProgress = () => { if (!window.confirm('Reset your streak and score history? This cannot be undone.')) return; localStorage.removeItem(HISTORY_KEY); setHistory([]); };
+
+  const resetProgress = () => {
+    if (!window.confirm('Reset your streak and score history across devices? This cannot be undone.')) return;
+    clearHistory();
+  };
+
   const activeWordIds = activeList?.wordIds ?? [];
   const myWords = useMemo(() => customWordsToWords(myCustomWords), [myCustomWords]);
   const myWordIds = useMemo(() => new Set(myWords.map((word) => word.id)), [myWords]);
@@ -610,8 +663,6 @@ function Cabinet() {
     const matches = (word: Word) =>
       `${word.expression} ${word.reading} ${word.meaning}`.toLowerCase().includes(q) &&
       (level === 'ALL' || word.level === level);
-    // "Saved" means "in the active save slot" — that now applies to both
-    // the built-in words and the user's own words (the heart works on both).
     if (favoritesOnly) {
       const savedMine = myWords.filter((word) => matches(word) && activeWordIds.includes(word.id));
       const savedOriginals = vocabulary.filter((word) => matches(word) && activeWordIds.includes(word.id));
@@ -621,6 +672,7 @@ function Cabinet() {
     const originals = vocabulary.filter(matches);
     return [...mine, ...originals];
   }, [query, level, favoritesOnly, activeWordIds, myWords]);
+
   return <div className="mx-auto max-w-[1400px] px-5 py-8 pb-28 md:px-10 md:py-12 md:pb-12">
     <section className="relative overflow-hidden rounded-[1.75rem] bg-[hsl(var(--primary))] px-6 py-8 text-[hsl(var(--primary-foreground))] md:px-10 md:py-11">
       <div className="absolute -right-16 -top-24 size-72 rounded-full border-[28px] border-[hsl(var(--accent)/.9)] opacity-80" /><div className="absolute -bottom-16 right-24 size-36 rounded-full border-[18px] border-[hsl(var(--secondary)/.55)]" />
@@ -658,14 +710,11 @@ function QuizSetup() {
   const [lists] = useState<WordList[]>(() => loadWordLists());
   const [savedListId, setSavedListId] = useState<string>(() => loadActiveListId(loadWordLists()));
   const savedList = lists.find((item) => item.id === savedListId);
-  // Read once per visit, the same way the save slots above are read — this
-  // powers the "My words" drawer (the user's personal-drawer words).
   const [myWords] = useState<Word[]>(() => customWordsToWords(loadCustomWords()));
   const cardSeconds = Math.min(Math.max(Math.round(Number(cardSecondsInput)) || 15, 3), 120);
   const sessionMinutes = Math.min(Math.max(Math.round(Number(sessionMinutesInput)) || 3, 1), 180);
   const totalSaved = lists.reduce((sum, item) => sum + item.wordIds.length, 0);
-  // Union of every chosen drawer, deduped by word id — so e.g. a saved N4
-  // word is only counted once for "N4 + Saved".
+
   const available = useMemo(() => {
     if (decks.includes('ALL')) return vocabulary.length;
     const seen = new Set<string>();
@@ -673,17 +722,17 @@ function QuizSetup() {
     for (const word of vocabulary) if (selectedLevels.includes(word.level)) seen.add(word.id);
     if (decks.includes('FAVORITES')) {
       for (const word of vocabulary) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
-      // Saved custom words live in the same slot, so count them too.
       for (const word of myWords) if (savedList?.wordIds.includes(word.id)) seen.add(word.id);
     }
     if (decks.includes('MY_WORDS')) for (const word of myWords) seen.add(word.id);
     return seen.size;
   }, [decks, savedList, myWords]);
+
   const toggleDeck = (deck: Deck) => {
     if (deck === 'ALL') { setDecks(['ALL']); return; }
     const rest = decks.filter((item) => item !== 'ALL');
     const isSelected = rest.includes(deck);
-    if (isSelected && rest.length === 1) return; // always keep at least one drawer open
+    if (isSelected && rest.length === 1) return;
     setDecks(isSelected ? rest.filter((item) => item !== deck) : [...rest, deck]);
   };
   useEffect(() => { setCount((current) => Math.min(current, Math.max(available, 1))); }, [available]);
@@ -718,18 +767,14 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const cardSeconds = Number(params.get('cardSeconds')) || 15;
   const sessionSeconds = Number(params.get('sessionSeconds')) || 180;
   const listId = params.get('listId');
+  
+  const { recordHistory } = useCabinetHistory();
+
   const [savedWordIds] = useState<string[]>(() => {
     if (!listId) return [];
     return loadWordLists().find((item) => item.id === listId)?.wordIds ?? [];
   });
-  // All personal-drawer words, always loaded. The "My words" drawer only
-  // enters the round when the user picked it, but the "Saved" drawer can
-  // contain custom words too — the Cabinet's heart works on them as well.
   const [myWords] = useState<Word[]>(() => customWordsToWords(loadCustomWords()));
-  // Any combination of drawers: 'Mixed' alone is the original full cabinet;
-  // otherwise the pool is the union of the chosen level drawers, the chosen
-  // save slot, and the personal-drawer words when picked. Deduped by id so
-  // e.g. a saved N4 word is not doubled in "N4 + Saved".
   const [pool] = useState<Word[]>(() => {
     if (decks.includes('ALL')) return vocabulary;
     const seen = new Set<string>();
@@ -746,8 +791,6 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   });
   const [cards] = useState<Word[]>(() => shuffle(pool).slice(0, count));
   const [index, setIndex] = useState(0);
-  // One random number per quiz session. It lets each round shuffle differently
-  // while staying fixed for the whole round (so it can't re-roll mid-card).
   const [sessionSeed] = useState(() => Math.floor(Math.random() * 2147483646) + 1);
   const [selected, setSelected] = useState<string | null>(null);
   const [results, setResults] = useState<QuizResult['answers']>([]);
@@ -757,21 +800,11 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const finishedRef = useRef(false);
 
   const word = cards[index];
-  // Stable per-card seed: session seed mixed with the card index, so every
-  // card gets a different option order that never changes while the timer
-  // runs. Because it's derived (not state) it can't drift between renders.
   const choiceSeed = (sessionSeed + (index + 1) * 7919) % 2147483646 || 1;
-  // Distractors keep distracting from the whole built-in cabinet exactly as
-  // before; when "My words" is part of the round, your words join in as
-  // possible decoys too. Memoized so the array reference is stable.
   const distractorSource = useMemo(
     () => (decks.includes('MY_WORDS') && myWords.length > 0 ? [...vocabulary, ...myWords] : vocabulary),
     [myWords],
   );
-  // NOTE: the order is produced by seededShuffle (deterministic), NOT by the
-  // random shuffle(). That's what actually stops the options from swapping:
-  // even if React re-runs this memo, the same card + seed gives the same
-  // order, so the buttons can never move mid-card.
   const choices = useMemo(
     () => word ? seededShuffle([word, ...seededShuffle(distractorSource.filter((item) => item.id !== word.id), choiceSeed).slice(0, 3)], choiceSeed + 1) : [],
     [word, distractorSource, choiceSeed],
@@ -802,10 +835,6 @@ function QuizActive({ params }: { params: URLSearchParams }) {
   const selectedRef = useRef(selected);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  // One question, one interval, fully self-contained. `remaining` is a plain
-  // local variable (not state) so the countdown's own logic never depends on
-  // React having already committed a re-render — that dependency is exactly
-  // what caused the earlier freeze/race bugs.
   useEffect(() => {
     if (timerMode !== 'question') return;
     setTimeLeft(cardSeconds);
@@ -852,7 +881,6 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     } else { setIndex((value) => value + 1); setSelected(null); }
   };
 
-  // Bulletproof Synchronized Ref Pattern for Keyboard Events
   const handlersRef = useRef({ answer, next, choices, selected });
   useEffect(() => {
     handlersRef.current = { answer, next, choices, selected };
@@ -867,7 +895,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []); // Binds once on mount. Clean, simple, and runs perfectly.
+  }, []);
 
   if (!word) return <div className="p-10">No cards available.</div>;
 
@@ -879,7 +907,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
        <div className="flex items-center justify-between"><LevelPill level={word.level} /><span className="mono-label flex items-center gap-2 text-muted-foreground"><Volume2 size={14} /> {direction === 'meaning' ? 'choose the meaning' : 'choose the Japanese word'}</span></div>
        <div className="py-14 text-center">{direction === 'meaning' ? <><p className="kanji-display text-7xl md:text-8xl">{word.expression}</p>{word.reading && <p className="mt-4 text-lg text-[hsl(var(--secondary))]">{word.reading}</p>}</> : <><p className="mx-auto max-w-2xl text-3xl font-semibold leading-tight md:text-5xl">{word.meaning}</p><p className="mono-label mt-5 text-muted-foreground">Which Japanese word matches?</p></>}</div>
        <div className="grid gap-3 md:grid-cols-2">{choices.map((choice, choiceIndex) => { const right = choice.id === word.id; return <button key={choice.id} onClick={() => answer(choice)} disabled={!!selected} className={cx('group flex min-h-14 items-center gap-4 rounded-xl border p-3 text-left text-sm font-medium transition-all', !selected && 'hover:-translate-y-0.5 hover:border-[hsl(var(--secondary))]', selected && 'cursor-default', selected && right && 'border-[hsl(var(--secondary))] bg-[hsl(var(--secondary)/.13)]', selected && choice.id === selected && !right && 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.14)]')} data-testid={`quiz-answer-${choiceIndex + 1}`}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted font-mono text-xs text-muted-foreground group-hover:bg-[hsl(var(--secondary)/.15)]">{choiceIndex + 1}</span><span className="flex flex-1 flex-col">{direction === 'meaning' ? choice.meaning : <><span className="kanji-display text-xl leading-tight">{choice.expression}</span>{choice.reading && <span className="mt-1 text-xs text-[hsl(var(--secondary))]">{choice.reading}</span>}</>}</span>{selected && right && <Check size={17} className="text-[hsl(var(--secondary))]" />}{selected && choice.id === selected && !right && <X size={17} className="text-[hsl(var(--accent))]" />}</button>; })}</div>
-       {selected && <div className="mt-6 flex items-center justify-between rounded-xl bg-muted px-4 py-3"><p className="text-sm font-semibold">{selected === word.id ? 'Nice. That one is staying put.' : selected === 'TIMEOUT' ? <>Time's up! The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && word.reading && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</> : <>The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && word.reading && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</>}</p><button onClick={next} disabled={!canAdvance} className="flex items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-3 py-2 text-xs font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:opacity-50" data-testid="button-next-card">{index + 1 === cards.length ? 'See results' : 'Next card'} <ArrowRight size={14} /></button></div>}
+       {selected && <div className="mt-6 flex items-center justify-between rounded-xl bg-muted px-4 py-3"><p className="text-sm font-semibold">{selected === word.id ? 'Nice. press enter' : selected === 'TIMEOUT' ? <>Time's up! (press enter) The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && word.reading && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</> : <>(press enter) The answer was <strong>{direction === 'meaning' ? word.meaning : word.expression}</strong>{direction === 'word' && word.reading && <span className="ml-1 font-normal text-muted-foreground">({word.reading})</span>}.</>}</p><button onClick={next} disabled={!canAdvance} className="flex items-center gap-2 rounded-lg bg-[hsl(var(--primary))] px-3 py-2 text-xs font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:opacity-50" data-testid="button-next-card">{index + 1 === cards.length ? 'See results' : 'Next card'} <ArrowRight size={14} /></button></div>}
     </section>
   </div>;
 }
