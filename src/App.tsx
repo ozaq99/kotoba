@@ -175,6 +175,8 @@ interface DataContextType {
   clearHistory: () => void;
   shareScores: boolean;
   toggleShareScores: (next: boolean) => void;
+  nickname: string;
+  saveNickname: (raw: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -186,6 +188,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
   const [customWords, setCustomWords] = useState<CustomWord[]>(() => loadCustomWords());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [shareScores, setShareScores] = useState<boolean>(() => localStorage.getItem('kotoba-share') === '1');
+  const [nickname, setNickname] = useState<string>(() => localStorage.getItem('kotoba-nickname') || '');
 
   useEffect(() => {
     if (!user) return;
@@ -217,6 +220,10 @@ function DataProvider({ children }: { children: React.ReactNode }) {
           setShareScores(data.shareScores);
           localStorage.setItem('kotoba-share', data.shareScores ? '1' : '0');
         }
+        if (typeof data.nickname === 'string') {
+          setNickname(data.nickname);
+          localStorage.setItem('kotoba-nickname', data.nickname);
+        }
       } else {
         setDoc(ref, {
           lists: loadWordLists(),
@@ -230,7 +237,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [user]);
 
-  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[]; history?: HistoryEntry[]; shareScores?: boolean }) => {
+  const pushToCloud = (payload: { lists?: WordList[]; activeId?: string; customWords?: CustomWord[]; history?: HistoryEntry[]; shareScores?: boolean; nickname?: string }) => {
     if (!user) return;
     setDoc(doc(db, 'userData', user.uid), payload, { merge: true }).catch(console.error);
   };
@@ -295,7 +302,7 @@ function DataProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Writes (or deletes) MY card in the public `leaderboard` collection.
-  const publishSummary = (nextHistory: HistoryEntry[], share: boolean) => {
+  const publishSummary = (nextHistory: HistoryEntry[], share: boolean, name: string = nickname) => {
     if (!user) return;
     const ref = doc(db, 'leaderboard', user.uid);          // "the card with my uid"
     if (!share || nextHistory.length === 0) {
@@ -313,7 +320,13 @@ function DataProvider({ children }: { children: React.ReactNode }) {
       updatedAt: new Date().toISOString(),
     }).catch(console.error);
   };
-
+  const saveNickname = (raw: string) => {
+    const next = raw.trim().slice(0, 30);
+    setNickname(next);
+    localStorage.setItem('kotoba-nickname', next);
+    pushToCloud({ nickname: next });
+    publishSummary(history, shareScores, next);   // update my public card right away
+  };
   const toggleShareScores = (next: boolean) => {
     setShareScores(next);
     localStorage.setItem('kotoba-share', next ? '1' : '0');
@@ -364,6 +377,8 @@ function DataProvider({ children }: { children: React.ReactNode }) {
         clearHistory: clearHistoryFn,
         shareScores,
         toggleShareScores,
+        nickname,
+        saveNickname,
       }}
     >
       {children}
@@ -408,6 +423,8 @@ function useCabinetHistory() {
     clearHistory: ctx.clearHistory,
     shareScores: ctx.shareScores,
     toggleShareScores: ctx.toggleShareScores,
+    nickname: ctx.nickname,
+    saveNickname: ctx.saveNickname,
   };
 }
 
@@ -1113,7 +1130,9 @@ type LeaderRow = { uid: string; displayName: string; totalQuizzes: number; avgPc
 
 function Leaderboard() {
   const { user } = useAuth();
-  const { shareScores, toggleShareScores } = useCabinetHistory();
+  const { shareScores, toggleShareScores, nickname, saveNickname } = useCabinetHistory();
+  const [draft, setDraft] = useState(nickname);
+  useEffect(() => setDraft(nickname), [nickname]);   // keep box in sync if cloud changes it
   const [rows, setRows] = useState<LeaderRow[] | null>(null);
   const [sortBy, setSortBy] = useState<'avgPct' | 'totalQuizzes' | 'streak'>('avgPct');
 
@@ -1127,7 +1146,14 @@ function Leaderboard() {
   return <div className="mx-auto max-w-[900px] px-5 py-8 pb-28 md:pb-12" data-testid="leaderboard-page">
     <p className="mono-label text-muted-foreground">Community / leaderboard</p>
     <h1 className="mt-2 font-serif text-4xl tracking-[-.04em]">Who's been studying.</h1>
-
+    <form onSubmit={(e) => { e.preventDefault(); saveNickname(draft); }} className="mt-6 flex items-center gap-3 rounded-2xl border border-border bg-card p-4">
+      <div className="flex-1">
+        <label htmlFor="nickname" className="block text-sm font-bold">Your nickname</label>
+        <span className="text-xs text-muted-foreground">This is the name other learners will see.</span>
+      </div>
+      <input id="nickname" value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={30} placeholder="e.g. Wowok" className="h-10 w-40 rounded-xl border border-border bg-background px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-[hsl(var(--secondary)/.35)]" data-testid="input-nickname" />
+      <button type="submit" disabled={draft.trim() === nickname} className="rounded-xl bg-[hsl(var(--primary))] px-4 py-2.5 text-sm font-bold text-[hsl(var(--primary-foreground))] disabled:opacity-40" data-testid="button-save-nickname">Save</button>
+    </form>
     <label className="mt-6 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4">
       <span>
         <span className="block text-sm font-bold">Share my scores</span>
