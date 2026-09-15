@@ -1,5 +1,6 @@
 import Login from '@/auth/Login';
 import ForgotPassword from '@/auth/ForgotPassword';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 import { useAuth } from '@/auth/useAuth';
 import { ProtectedRoute } from '@/auth/ProtectedRoute';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -11,7 +12,7 @@ import {
   ArrowRight, BookOpen, BookPlus, Check, ChevronDown, CircleHelp, Clock3, Filter,
   Flame, FolderOpen, Headphones, Heart, Home, Keyboard, Layers3, LogOut, Menu,
   Pencil, Play, Plus, RotateCcw, Search, Sparkles, Star, Target, Trash2,
-  Trophy, Volume2, X, Zap,
+  Trophy, TrendingUp, Users, Volume2, X, Zap,
 } from 'lucide-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -51,7 +52,7 @@ function formatDecks(decks: Deck[]): string {
 }
 
 type QuizResult = { score: number; total: number; answers: Array<{ word: Word; choice: string; correct: boolean }>; level: string; finishedAt: string };
-type HistoryEntry = { date: string; score: number; total: number };
+type HistoryEntry = { date: string; score: number; total: number; level?: string };
 const HISTORY_KEY = 'kotoba-history';
 function toDateKey(date: Date) { return date.toISOString().slice(0, 10); }
 function loadHistory(): HistoryEntry[] { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; } }
@@ -59,11 +60,58 @@ function sanitizeHistory(history: any[]): HistoryEntry[] {
   if (!Array.isArray(history)) return [];
   return history
     .filter((item) => item && typeof item.date === 'string' && typeof item.score === 'number' && typeof item.total === 'number')
-    .map((item) => ({
+      .map((item) => ({
       date: item.date,
       score: item.score,
-      total: item.total
+      total: item.total,
+      // IMPORTANT: Firestore crashes on `undefined`, so only add `level` if it exists
+      ...(typeof item.level === 'string' ? { level: item.level } : {}),
     }));
+}
+
+function computeProgress(history: HistoryEntry[]) {
+  const pct = (items: HistoryEntry[]) => {
+    const total = items.reduce((sum, h) => sum + h.total, 0);
+    if (total === 0) return null;
+    return Math.round((items.reduce((sum, h) => sum + h.score, 0) / total) * 100);
+  };
+
+  const totalQuizzes = history.length;
+  const totalCards = history.reduce((sum, h) => sum + h.total, 0);
+  const average = pct(history) ?? 0;
+  const best = history.reduce((b, h) => Math.max(b, Math.round((h.score / h.total) * 100)), 0);
+
+  // Trend: last 5 quizzes vs the 5 before that. Positive = improving.
+  const recent = pct(history.slice(-5));
+  const older = pct(history.slice(-10, -5));
+  const trend = recent !== null && older !== null ? recent - older : null;
+
+  // Per-level breakdown: { "N5": {score, total}, "N3 + N2": {...}, ... }
+  const byLevel: Record<string, { score: number; total: number }> = {};
+  for (const h of history) {
+    const key = h.level ?? 'Unknown';
+    byLevel[key] ??= { score: 0, total: 0 };
+    byLevel[key].score += h.score;
+    byLevel[key].total += h.total;
+  }
+
+  // Last 20 quizzes, shaped for the chart
+  const chart = history.slice(-20).map((h, i) => ({
+    name: `#${history.length - Math.min(history.length, 20) + i + 1}`,
+    pct: Math.round((h.score / h.total) * 100),
+    date: h.date,
+  }));
+
+  // Quizzes per day for the last 14 days (activity)
+  const activity: { day: string; quizzes: number }[] = [];
+  const cursor = new Date();
+  for (let i = 0; i < 14; i += 1) {
+    const key = toDateKey(cursor);
+    activity.unshift({ day: key.slice(5), quizzes: history.filter((h) => h.date === key).length });
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return { totalQuizzes, totalCards, average, best, trend, byLevel, chart, activity };
 }
 
 function computeStreaks(history: HistoryEntry[]) {
@@ -347,6 +395,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     { href: '/quiz', label: 'Quiz deck', icon: Target },
     { href: '/custom', label: 'My words', icon: BookPlus },
     { href: '/results', label: 'Review', icon: Trophy },
+    { href: '/progress', label: 'Progress', icon: TrendingUp },
   ];
   return <div className="paper-grain min-h-[100dvh] bg-background">
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[246px] flex-col bg-[hsl(var(--sidebar))] px-5 py-6 text-[hsl(var(--sidebar-foreground))] md:flex">
@@ -814,7 +863,7 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     finishedRef.current = true;
     const score = finalResults.filter((item) => item.correct).length;
     sessionStorage.setItem('kotoba-last-result', JSON.stringify({ score, total: cards.length, answers: finalResults, level: formatDecks(decks), finishedAt: new Date().toISOString() } satisfies QuizResult));
-    recordHistory({ date: toDateKey(new Date()), score, total: cards.length });
+    recordHistory({ date: toDateKey(new Date()), score, total: cards.length, level: formatDecks(decks) });
     setLocation('/results');
   };
   const answer = (choice: Word) => {
@@ -940,12 +989,92 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+function Progress() {
+  const { history } = useCabinetHistory();
+  const p = useMemo(() => computeProgress(history), [history]);
+  const { current: currentRun, best: bestRun } = useMemo(() => computeStreaks(history), [history]);
+
+  if (history.length === 0) {
+    return <div className="mx-auto max-w-[720px] px-5 py-20 text-center">
+      <h1 className="font-serif text-4xl">Nothing to measure yet.</h1>
+      <p className="mt-3 text-sm text-muted-foreground">Finish a quiz and your progress will show up here.</p>
+      <Link href="/quiz" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-[hsl(var(--primary))] px-5 py-3 text-sm font-bold text-[hsl(var(--primary-foreground))]">Start a round <ArrowRight size={16} /></Link>
+    </div>;
+  }
+
+  const trendLabel = p.trend === null ? 'need 10+ quizzes' : p.trend > 0 ? `▲ +${p.trend}% vs before` : p.trend < 0 ? `▼ ${p.trend}% vs before` : '→ steady';
+
+  return <div className="mx-auto max-w-[1100px] px-5 py-8 pb-28 md:pb-12" data-testid="progress-page">
+    <p className="mono-label text-muted-foreground">Progress / analysis</p>
+    <h1 className="mt-2 font-serif text-4xl tracking-[-.04em]">How far you've come.</h1>
+
+    {/* Headline numbers */}
+    <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <StatCard icon={Target} label="Average score" value={`${p.average}%`} note={`${p.totalQuizzes} quizzes · ${p.totalCards} cards`} color="hsl(69 73% 45%)" />
+      <StatCard icon={Trophy} label="Best round" value={`${p.best}%`} note="personal record" color="hsl(var(--accent))" />
+      <StatCard icon={Flame} label="Streak" value={`${currentRun}d`} note={`best ${bestRun} days`} color="hsl(var(--secondary))" />
+      <StatCard icon={ArrowRight} label="Trend" value={p.trend === null ? '—' : `${p.trend > 0 ? '+' : ''}${p.trend}%`} note={trendLabel} color="hsl(var(--primary))" />
+    </div>
+
+    {/* Score over time */}
+    <section className="mt-6 rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
+      <p className="mono-label text-muted-foreground">Last 20 rounds</p>
+      <h2 className="mt-2 font-serif text-2xl">Score over time</h2>
+      <div className="mt-6 h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={p.chart}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey="name" fontSize={11} />
+            <YAxis domain={[0, 100]} fontSize={11} unit="%" />
+            <Tooltip formatter={(v: number) => `${v}%`} labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ''} />
+            <Line type="monotone" dataKey="pct" stroke="hsl(69 73% 45%)" strokeWidth={3} dot={{ r: 4 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+
+    <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      {/* Per-level */}
+      <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
+        <p className="mono-label text-muted-foreground">By drawer</p>
+        <h2 className="mt-2 font-serif text-2xl">Where you're strong</h2>
+        <ul className="mt-6 space-y-4">
+          {Object.entries(p.byLevel).sort((a, b) => b[1].total - a[1].total).map(([level, s]) => {
+            const pct = Math.round((s.score / s.total) * 100);
+            return <li key={level}>
+              <div className="mb-1.5 flex justify-between text-sm font-bold"><span>{level}</span><span className="text-muted-foreground">{pct}% · {s.total} cards</span></div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-[hsl(var(--secondary))]" style={{ width: `${pct}%` }} /></div>
+            </li>;
+          })}
+        </ul>
+      </section>
+
+      {/* Activity */}
+      <section className="rounded-[1.75rem] border border-border bg-card p-6 md:p-8">
+        <p className="mono-label text-muted-foreground">Last 14 days</p>
+        <h2 className="mt-2 font-serif text-2xl">Consistency</h2>
+        <div className="mt-6 h-48">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={p.activity}>
+              <XAxis dataKey="day" fontSize={10} />
+              <YAxis allowDecimals={false} fontSize={11} />
+              <Tooltip />
+              <Bar dataKey="quizzes" fill="hsl(var(--accent))" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+    </div>
+  </div>;
+}
+
 function Router() {
   return <RoutedErrorBoundary><Shell><Switch>
     <Route path="/" component={() => <ProtectedRoute><Cabinet /></ProtectedRoute>} />
     <Route path="/quiz" component={() => <ProtectedRoute><Quiz /></ProtectedRoute>} />
     <Route path="/custom" component={() => <ProtectedRoute><CustomWords /></ProtectedRoute>} />
     <Route path="/results" component={() => <ProtectedRoute><Results /></ProtectedRoute>} />
+    <Route path="/progress" component={() => <ProtectedRoute><Progress /></ProtectedRoute>} />
     <Route path="/login" component={Login} />
     <Route path="/forgot-password" component={ForgotPassword} />
     <Route component={NotFound} />
