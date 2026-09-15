@@ -852,15 +852,22 @@ function QuizActive({ params }: { params: URLSearchParams }) {
     } else { setIndex((value) => value + 1); setSelected(null); }
   };
 
+  // Bulletproof Synchronized Ref Pattern for Keyboard Events
+  const handlersRef = useRef({ answer, next, choices, selected });
+  useEffect(() => {
+    handlersRef.current = { answer, next, choices, selected };
+  }, [answer, next, choices, selected]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const { answer, next, choices, selected } = handlersRef.current;
       const key = Number(event.key);
       if (key >= 1 && key <= choices.length) answer(choices[key - 1]);
       if (event.key === 'Enter' && selected) next();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [choices, selected]);
+  }, []); // Binds once on mount. Clean, simple, and runs perfectly.
 
   if (!word) return <div className="p-10">No cards available.</div>;
 
@@ -933,4 +940,3 @@ function App() {
 }
 
 export default App;
-
